@@ -10,6 +10,7 @@ class BookMetadata {
   final DateTime lastModified;
   final DateTime dateAdded;
   final String format; // 'epub' or 'pdf'
+  final double? readingPercentage;
 
   BookMetadata({
     this.id,
@@ -21,6 +22,7 @@ class BookMetadata {
     required this.lastModified,
     required this.dateAdded,
     required this.format,
+    this.readingPercentage,
   });
 
   // Convert a BookMetadata instance into a Map
@@ -35,6 +37,7 @@ class BookMetadata {
       'lastModified': lastModified.toIso8601String(),
       'dateAdded': dateAdded.toIso8601String(),
       'format': format,
+      'readingPercentage': readingPercentage,
     };
   }
 
@@ -50,6 +53,7 @@ class BookMetadata {
       lastModified: DateTime.parse(map['lastModified']),
       dateAdded: DateTime.parse(map['dateAdded']),
       format: map['format'],
+      readingPercentage: map['readingPercentage'] as double?,
     );
   }
 }

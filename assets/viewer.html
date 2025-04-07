@@ -54,12 +54,11 @@
 			// Global variables for Flutter to access
 			window.epubBook = null;
 			window.epubRendition = null;
-			window.FlutterChannel = null; // Placeholder for channel object
 
 			// Function to initialize Epub.js (called by Flutter)
-			function initializeEpubReader(opfPath, flutterChannel) {
+			function initializeEpubReader(opfPath, initialCfi) {
 				console.log("Initializing Epub.js with OPF path:", opfPath);
-				window.FlutterChannel = flutterChannel; // Store for later use
+				console.log("Received initial CFI:", initialCfi);
 
 				// Check if ePub is available
 				if (typeof ePub === "undefined") {
@@ -88,42 +87,56 @@
 						flow: "paginated",
 						spread: "none",
 						allowScriptedContent: true,
-						manager: "continuous",
+						manager: "default", // Use default manager for stable pagination
 					});
 					console.log(
 						"Rendition object created:",
 						window.epubRendition
 					);
 
-					// Display the first section/page
+					// Display the initial location if provided, otherwise display start
+					const displayTarget = initialCfi || undefined; // Pass CFI or let display() find start
+					console.log(
+						"Calling initial display() with target:",
+						displayTarget
+					);
 					window.epubRendition
-						.display()
+						.display(displayTarget)
 						.then(() => {
-							console.log("Initial rendition displayed.");
+							console.log(
+								"Initial rendition displayed. Generating locations..."
+							);
 							// Generate locations after initial display for better performance
-							return window.epubBook.locations.generate(1024);
+							return window.epubBook.locations.generate(2048);
 						})
 						.then((locations) => {
 							console.log(
 								"Locations generated:",
 								window.epubBook.locations.total
 							);
-							// Send initial location and total pages back to Flutter
-							sendLocationUpdate();
+							// Send initial location and total pages back to Flutter ONLY AFTER generation
+							// console.log(
+							// 	"Sending initial location and pagination info post-generation."
+							// );
+							// Explicitly get current location after generation and pass it
+							const currentLoc =
+								window.epubRendition.currentLocation();
+							// console.log(
+							// 	"Initial currentLocation object from rendition:",
+							// 	JSON.stringify(currentLoc)
+							// );
+							sendLocationUpdate(currentLoc);
 							sendPaginationInfo();
 						})
 						.catch((err) => {
-							console.error(
-								"Error during initial display or location generation:",
-								err
-							);
-							// Optionally report error back to Flutter
+							console.error("ERROR generating locations:", err);
+							// Optionally report this specific error back to Flutter
 							if (window.FlutterChannel) {
 								window.FlutterChannel.postMessage(
 									JSON.stringify({
 										action: "error",
 										message:
-											"Epub.js display/location error: " +
+											"Failed to generate EPUB locations: " +
 											err,
 									})
 								);
@@ -133,20 +146,20 @@
 					// --- Event Listeners ---
 					window.epubRendition.on("locationChanged", (location) => {
 						// console.log(
-						// 	"Epub.js locationChanged:",
-						// 	location.start.cfi
+						// 	"Event: locationChanged - CFI:",
+						// 	location?.start?.cfi
 						// );
-						sendLocationUpdate(location);
+						// DO NOT send update from here, CFI is often undefined
 					});
 
 					window.epubRendition.on("rendered", (section, view) => {
 						// console.log("Epub.js rendered section:", section.href);
-						// Apply themes/styles after section is rendered in the iframe
-						// You might need to re-apply theme settings here if they don't persist across chapter loads.
+						// Re-apply theme settings here if needed (sometimes necessary across chapter loads)
+						// This might involve calling applyStyles and changeFontSize again
 					});
 
 					window.epubRendition.on("relocated", (location) => {
-						// console.log("Epub.js relocated:", location.start.cfi);
+						// console.log("Event: relocated - CFI:", location?.start?.cfi); // Cleaned up
 						// Relocated often fires after locationChanged and pagination calculations
 						// This might be a better place to update Flutter state
 						sendLocationUpdate(location);
@@ -164,10 +177,6 @@
 					// Theme / Style handling placeholder
 					window.epubRendition.themes.default({
 						// Default styles - can be overridden by Flutter later
-						body: {
-							// Add initial body style
-							padding: "5px", // Example: Add some padding
-						},
 						"::selection": {
 							background: "rgba(0,120,215,0.3)",
 						},
@@ -178,12 +187,15 @@
 
 					// Add navigation methods to window for Flutter to call
 					window.nextPage = function () {
+						// console.log("JS: window.nextPage() called."); // DEBUG
+						// console.log("JS: Current rendition object:", window.epubRendition); // Cleaned up
 						if (window.epubRendition && window.epubRendition.next) {
 							try {
 								window.epubRendition.next();
+								// console.log("JS: Called epubRendition.next()"); // DEBUG
 							} catch (err) {
 								console.error(
-									"Error navigating to next page:",
+									"Error calling rendition.next():", // More specific log
 									err
 								);
 							}
@@ -195,12 +207,15 @@
 					};
 
 					window.previousPage = function () {
+						// console.log("JS: window.previousPage() called."); // DEBUG
+						// console.log("JS: Current rendition object:", window.epubRendition); // Cleaned up
 						if (window.epubRendition && window.epubRendition.prev) {
 							try {
 								window.epubRendition.prev();
+								// console.log("JS: Called epubRendition.prev()"); // DEBUG
 							} catch (err) {
 								console.error(
-									"Error navigating to previous page:",
+									"Error calling rendition.prev():", // More specific log
 									err
 								);
 							}
@@ -227,23 +242,38 @@
 
 			// Function to apply combined styles (called by Flutter)
 			function applyStyles(styles) {
-				console.log("applyStyles called with:", JSON.stringify(styles));
+				// console.log("applyStyles called with:", JSON.stringify(styles));
 				if (!window.epubRendition) {
 					console.error("applyStyles: Rendition not available");
 					return;
 				}
-				// Register the theme initially if it doesn't exist (safer than just overriding)
-				// Or ensure it's registered in initializeEpubReader
-				// Let's assume 'default' is registered, now override:
+				// Use register instead of override, as register+select worked before for themes
 				try {
-					window.epubRendition.themes.override("default", styles);
-					// Need to re-select the theme for override to take effect immediately?
-					window.epubRendition.themes.select("default"); // Re-select to force application
-					console.log(
-						"Styles overridden and theme 'default' re-selected"
-					);
+					window.epubRendition.themes.register("default", styles);
+					// Re-select the theme to force application
+					window.epubRendition.themes.select("default");
+					// console.log(
+					// 	"Styles registered and theme 'default' re-selected"
+					// );
 				} catch (err) {
-					console.error("Error overriding/selecting styles:", err);
+					console.error("Error registering/selecting styles:", err);
+				}
+			}
+
+			// Function to change font size (called by Flutter)
+			function changeFontSize(size) {
+				// console.log("changeFontSize called with:", size);
+				if (!window.epubRendition) {
+					console.error("changeFontSize: Rendition not available");
+					return;
+				}
+				try {
+					// Use the dedicated themes.fontSize() method
+					window.epubRendition.themes.fontSize(size + "px");
+					// console.log("Font size set via themes.fontSize()");
+					// Do we need themes.select('default') after this too? Let's test without first.
+				} catch (err) {
+					console.error("Error setting font size:", err);
 				}
 			}
 
@@ -251,23 +281,41 @@
 
 			// Function to send location updates to Flutter
 			function sendLocationUpdate(location) {
-				if (!window.FlutterChannel || !window.epubBook) return;
+				if (!window.FlutterChannel || !window.epubBook) return; // Keep essential guard
 
-				const currentLocation =
-					location || window.epubRendition.currentLocation();
-				if (!currentLocation) return;
+				// Now we know location, location.start, location.start.cfi, and location.start.displayed exist.
+				const currentLocation = location; // Use the validated parameter
 
-				const percentage = window.epubBook.locations.percentageFromCfi(
-					currentLocation.start.cfi
-				);
+				// Check if locations are ready before calculating percentage
+				let percentage = 0; // Default percentage
+				if (
+					window.epubBook.locations &&
+					window.epubBook.locations.total > 0
+				) {
+					percentage = window.epubBook.locations.percentageFromCfi(
+						currentLocation.start.cfi
+					);
+				}
+
+				// Ensure displayed page/total are numbers, default to 0/1 if undefined
+				const displayedPage =
+					currentLocation.start.displayed?.page ?? 0;
+				const totalPagesInChapter =
+					currentLocation.start.displayed?.total ?? 1;
+
 				const message = {
 					action: "locationUpdate",
 					cfi: currentLocation.start.cfi,
 					percentage: percentage,
-					displayedPage: currentLocation.start.displayed.page,
-					totalPagesInChapter: currentLocation.start.displayed.total,
+					displayedPage: displayedPage,
+					totalPagesInChapter: totalPagesInChapter,
 				};
 
+				// console.log(
+				// 	`sendLocationUpdate: CFI=${
+				// 		message.cfi
+				// 	}, Percentage=${message.percentage.toFixed(4)}`
+				// ); // Log sent data
 				window.FlutterChannel.postMessage(JSON.stringify(message));
 			}
 

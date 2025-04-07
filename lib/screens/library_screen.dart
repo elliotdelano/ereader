@@ -124,9 +124,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
 
     try {
-      final books = await _fileService.scanForBooks(_selectedDirectory!);
+      // Load initial book list (without percentage)
+      List<Book> initialBooks = await _fileService.scanForBooks(
+        _selectedDirectory!,
+      );
+
+      // Create a new list to hold books with percentages
+      List<Book> booksWithProgress = [];
+
+      // Load progress for each book
+      for (final book in initialBooks) {
+        final progressData = await _storageService.loadReadingProgress(
+          book.path,
+        );
+        if (progressData != null && progressData['percentage'] is double) {
+          // Create a new book instance with the loaded percentage
+          booksWithProgress.add(
+            book.copyWith(
+              readingPercentage: progressData['percentage'] as double,
+            ),
+          );
+        } else {
+          // Add the book without progress if none was saved
+          booksWithProgress.add(book);
+        }
+      }
+
       setState(() {
-        _books = books;
+        _books =
+            booksWithProgress; // Update state with the list containing percentages
         _sortBooks();
       });
     } catch (e) {
@@ -251,7 +277,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             )
                             : _buildDefaultIcon(book),
                     title: Text(book.title),
-                    subtitle: Text(book.author ?? 'Unknown Author'),
+                    isThreeLine:
+                        book.readingPercentage != null &&
+                        book.readingPercentage! > 0.01,
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(book.author ?? 'Unknown Author'),
+                        if (book.readingPercentage != null &&
+                            book.readingPercentage! > 0.01) ...[
+                          const SizedBox(height: 4),
+                          LinearProgressIndicator(
+                            value: book.readingPercentage!,
+                            minHeight: 6,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainer,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.primary,
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ],
+                      ],
+                    ),
                     trailing: PopupMenuButton<String>(
                       itemBuilder:
                           (context) => [

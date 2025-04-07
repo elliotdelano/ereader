@@ -26,6 +26,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final StorageService _storageService = StorageService();
   List<Bookmark> _bookmarks = [];
   PdfViewerController? _pdfController;
+  String? _initialCfi;
+  bool _isLoadingProgress = true;
 
   // Comment out the key for the old viewer
   // final GlobalKey<CustomEpubViewerState> _epubViewerKey =
@@ -37,7 +39,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void initState() {
     super.initState();
-    _loadBookmarks();
+    _loadInitialData();
     if (widget.book.format == BookFormat.pdf) {
       _pdfController = PdfViewerController();
     }
@@ -169,6 +171,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  Future<void> _loadInitialData() async {
+    await _loadBookmarks();
+    if (widget.book.format == BookFormat.epub) {
+      // Load the progress map
+      final progressData = await _storageService.loadReadingProgress(
+        widget.book.path,
+      );
+      // Extract the CFI if the map and key exist
+      if (progressData != null && progressData['cfi'] is String) {
+        _initialCfi = progressData['cfi'] as String;
+      } else {
+        _initialCfi = null; // Ensure it's null if not found
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _isLoadingProgress = false; // Mark loading as complete
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Access providers
@@ -201,9 +224,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _buildReaderView(ReaderSettingsProvider settingsProvider) {
     if (widget.book.format == BookFormat.epub) {
-      // *** NEW: Use the CustomEpubViewer ***
-      // Ensure ReaderStateProvider is provided above this widget
-      return CustomEpubViewer(filePath: widget.book.path);
+      if (_isLoadingProgress) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return CustomEpubViewer(
+        filePath: widget.book.path,
+        initialCfi: _initialCfi,
+      );
     } else if (widget.book.format == BookFormat.pdf && _pdfController != null) {
       return SfPdfViewer.asset(widget.book.path, controller: _pdfController);
     } else {
@@ -301,8 +328,8 @@ class _SettingsModalState extends State<_SettingsModal> {
           Slider(
             value: _currentFontSize,
             min: 10.0,
-            max: 60.0,
-            divisions: 40,
+            max: 30.0,
+            divisions: 20,
             label: _currentFontSize.round().toString(),
             onChanged: (value) {
               setState(() {

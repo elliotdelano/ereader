@@ -10,22 +10,19 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'package:flutter/gestures.dart';
+import 'package:ereader/services/storage_service.dart';
 
 // Add a callback type for navigation methods if needed by parent
 // typedef ChapterNavigationCallback = void Function(String href);
 
 class CustomEpubViewer extends StatefulWidget {
   final String filePath;
+  final String? initialCfi;
   // Add callbacks if ReaderScreen needs to trigger navigation
   // final ChapterNavigationCallback? onNextChapter;
   // final ChapterNavigationCallback? onPreviousChapter;
 
-  const CustomEpubViewer({
-    super.key,
-    required this.filePath,
-    // this.onNextChapter,
-    // this.onPreviousChapter,
-  });
+  const CustomEpubViewer({super.key, required this.filePath, this.initialCfi});
 
   @override
   State<CustomEpubViewer> createState() => CustomEpubViewerState();
@@ -33,6 +30,7 @@ class CustomEpubViewer extends StatefulWidget {
 
 class CustomEpubViewerState extends State<CustomEpubViewer> {
   final EpubServerService epubServerService = EpubServerService();
+  final StorageService _storageService = StorageService();
   bool _isLoading = true;
   String? _error;
   WebViewController? _webViewController;
@@ -107,25 +105,30 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     final initialUrlToLoad = '$_baseUrl/viewer.html';
 
     void _handleJsMessage(String messageJsonString) {
-      print("Message from WebView: $messageJsonString");
+      // print("Message from WebView: $messageJsonString"); // Keep commented unless debugging all messages
       try {
         final data = jsonDecode(messageJsonString);
-        if (data['action'] == 'locationUpdate') {
+        final String action = data['action'] ?? 'unknown';
+        // print("Received action from JS: $action"); // Log action type
+
+        if (action == 'locationUpdate') {
           if (mounted) {
             setState(() {
               _currentCfi = data['cfi'];
-              _bookPercentage = data['percentage'] ?? 0.0;
+              // Ensure percentage is treated as double
+              _bookPercentage = (data['percentage'] ?? 0.0).toDouble();
               _currentPage = data['displayedPage'] ?? 0;
-              _totalPages = data['totalPagesInChapter'] ?? 1;
+              // _totalPages is set by paginationInfo
             });
           }
-        } else if (data['action'] == 'paginationInfo') {
+        } else if (action == 'paginationInfo') {
           if (mounted) {
             setState(() {
+              // Ensure total pages is treated as int
               _totalPages = (data['totalPagesInBook'] ?? 1).toInt();
             });
           }
-        } else if (data['action'] == 'error') {
+        } else if (action == 'error') {
           print("Error from Epub.js: ${data['message']}");
         }
       } catch (e) {
@@ -181,32 +184,41 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
         .replaceAll('\\', '\\\\')
         .replaceAll('"', '\\"')
         .replaceAll("'", "\\'");
+
+    // Escape the initial CFI for JS string, handle null
+    String jsInitialCfiArg;
+    if (widget.initialCfi == null || widget.initialCfi!.isEmpty) {
+      jsInitialCfiArg = 'null';
+    } else {
+      // Basic escaping for JS string literal (ensure quotes are handled)
+      final escapedCfi = widget.initialCfi!
+          .replaceAll('\\', '\\\\') // Escape backslashes
+          .replaceAll("'", "\\'"); // Escape single quotes
+      jsInitialCfiArg = "'$escapedCfi'"; // Wrap in single quotes
+    }
+
+    // Pass the channel object directly by its name
+    // Pass the escaped initial CFI
     final jsCode = '''
-      initializeEpubReader('$escapedOpfPath', window.$_jsChannelName);
+       initializeEpubReader('$escapedOpfPath', $jsInitialCfiArg);
     ''';
     try {
       await _webViewController!.runJavaScript(jsCode);
       print('Epub.js initialization called with OPF path: $_opfRelativePath');
-      // Apply initial settings after JS is initialized
-      if (mounted && !_isLoading) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            // Check mount again in callback
-            setState(
-              () {},
-            ); // Trigger rebuild to apply initial styles via build()
-          }
-        });
-      }
+      // Apply initial settings right after JS initialization completes
+      await _applyThemeAndFontFamilyToWebView();
+      await _applyFontSizeToWebView();
     } catch (e) {
-      print("Error calling initializeEpubReader in JS: $e");
+      print(
+        "Error calling initializeEpubReader or applying initial styles/size in JS: $e",
+      );
     }
   }
 
   void _updateSettingsIfNeeded() {
     // This function now just contains the logic, called from build()
     if (!mounted || _webViewController == null || _isLoading)
-      return; // Don't run if loading or not ready
+      return; // ADD _isLoading CHECK
 
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
@@ -230,8 +242,10 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     }
 
     if (changed) {
-      print("(Build) Settings changed, applying to WebView..."); // Added tag
-      _applyCurrentStylesToWebView(); // Apply the styles
+      print("(Build) Settings changed, applying to WebView...");
+      _applyThemeAndFontFamilyToWebView();
+      _applyFontSizeToWebView();
+
       // Store current settings for next check
       _previousFontSize = currentFontSize;
       _previousFontFamily = currentFontFamily;
@@ -239,7 +253,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     }
   }
 
-  Future<void> _applyCurrentStylesToWebView() async {
+  Future<void> _applyThemeAndFontFamilyToWebView() async {
     if (_webViewController == null) return;
 
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
@@ -249,52 +263,63 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
 
     final currentTheme = themeProvider.currentTheme;
-    final currentFontSize = settingsProvider.fontSize;
     final currentFontFamily = settingsProvider.fontFamily;
 
     // 1. Build the base theme styles
     Map<String, dynamic> styles = _getThemeBaseStyles(currentTheme);
 
-    // 2. Add font size and family to the body style within the rules
-    // Ensure 'body' key exists, initialize if not (though _getThemeBaseStyles should handle it)
+    // 2. Add font *family* to the body style within the rules
     if (styles['body'] is! Map) {
       styles['body'] = <String, dynamic>{};
     }
-    // Merge font styles into the existing body map
-    Map<String, dynamic> bodyStyles =
-        styles['body'] as Map<String, dynamic>; // Get the body map
-    bodyStyles['font-size'] = '${currentFontSize}px';
-    bodyStyles['font-family'] =
-        "'$currentFontFamily'"; // Ensure font family is quoted
+    Map<String, dynamic> bodyStyles = styles['body'] as Map<String, dynamic>;
+    bodyStyles['font-family'] = "'$currentFontFamily'";
 
-    // 3. Encode and call the JavaScript function
+    // 3. Encode and call the applyStyles JavaScript function (which uses register+select)
     final stylesJson = jsonEncode(styles);
     try {
       await _webViewController!.runJavaScript('applyStyles($stylesJson);');
       print(
-        "Applied styles: Theme=${currentTheme.name}, Size=$currentFontSize, Family=$currentFontFamily",
+        "Applied base styles: Theme=${currentTheme.name}, Family=$currentFontFamily",
       );
     } catch (e) {
-      print("Error applying styles: $e");
+      print("Error applying base styles/family: $e");
+    }
+  }
+
+  Future<void> _applyFontSizeToWebView() async {
+    if (_webViewController == null) return;
+
+    final settingsProvider = Provider.of<ReaderSettingsProvider>(
+      context,
+      listen: false,
+    );
+    final currentFontSize = settingsProvider.fontSize;
+
+    try {
+      // Call the dedicated JS function for font size
+      await _webViewController!.runJavaScript(
+        'changeFontSize($currentFontSize);',
+      );
+      print("Applied font size: $currentFontSize");
+    } catch (e) {
+      print("Error applying font size: $e");
     }
   }
 
   Map<String, dynamic> _getThemeBaseStyles(AppTheme theme) {
     // Define common rules if any (e.g., link styling independent of theme)
     Map<String, dynamic> commonRules = {
-      'a': {'text-decoration': 'none'}, // Example: Remove underline from links
+      'a': {'text-decoration': 'none'},
       'a:hover': {'text-decoration': 'underline'},
-      'p': {'line-height': '1.5', 'margin-bottom': '0.8em'}, // Adjust spacing
+      'p': {'line-height': '1.5', 'margin-bottom': '0.8em'},
     };
 
     switch (theme) {
       case AppTheme.dark:
         return {
           'body': {'background-color': '#121212', 'color': '#E0E0E0'},
-          'a': {
-            'color': '#BB86FC',
-            ...commonRules['a'],
-          }, // Merge common link style
+          'a': {'color': '#BB86FC', ...commonRules['a']},
           'p': commonRules['p'],
           // Add other dark-specific overrides here if needed
         };
@@ -336,6 +361,20 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
   void dispose() {
     print("CustomEpubViewer disposing, stopping server...");
     epubServerService.stop();
+
+    // Save current reading progress
+    if (_currentCfi != null && _currentCfi!.isNotEmpty) {
+      print("Saving progress: CFI=$_currentCfi for path=${widget.filePath}");
+      // Use _storageService instance
+      _storageService.saveReadingProgress(
+        widget.filePath,
+        _currentCfi!,
+        _bookPercentage,
+      );
+    } else {
+      print("No valid CFI to save for ${widget.filePath}");
+    }
+
     super.dispose();
   }
 
@@ -353,8 +392,10 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
         if (details.primaryVelocity!.abs() < minSwipeVelocity) return;
 
         if (details.primaryVelocity! < 0) {
+          print("Swipe Left detected, calling nextPage()..."); // DEBUG
           nextPage();
         } else {
+          print("Swipe Right detected, calling previousPage()..."); // DEBUG
           previousPage();
         }
       },

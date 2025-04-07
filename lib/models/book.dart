@@ -15,6 +15,7 @@ class Book {
   final DateTime lastModified;
   final DateTime dateAdded;
   final BookFormat format;
+  final double? readingPercentage;
 
   Book({
     required this.path,
@@ -25,6 +26,7 @@ class Book {
     required this.lastModified,
     required this.dateAdded,
     required this.format,
+    this.readingPercentage,
   });
 
   // Factory method to create a Book from a BookMetadata
@@ -38,6 +40,7 @@ class Book {
       lastModified: metadata.lastModified,
       dateAdded: metadata.dateAdded,
       format: metadata.format == 'epub' ? BookFormat.epub : BookFormat.pdf,
+      readingPercentage: metadata.readingPercentage,
     );
   }
 
@@ -87,6 +90,21 @@ class Book {
       format: format,
       lastModified: File(path).lastModifiedSync(),
       dateAdded: DateTime.now(),
+      readingPercentage: null,
+    );
+  }
+
+  Book copyWith({double? readingPercentage}) {
+    return Book(
+      path: path,
+      title: title,
+      author: author,
+      series: series,
+      coverImage: coverImage,
+      lastModified: lastModified,
+      dateAdded: dateAdded,
+      format: format,
+      readingPercentage: readingPercentage ?? this.readingPercentage,
     );
   }
 }

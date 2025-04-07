@@ -30,7 +30,7 @@ class ReaderSettingsProvider with ChangeNotifier {
   String get fontFamily => _fontFamily;
 
   Future<void> setFontSize(double size) async {
-    _fontSize = size.clamp(10.0, 60.0); // Limit font size to a reasonable range
+    _fontSize = size.clamp(10.0, 30.0); // Limit font size to a reasonable range
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_fontSizePrefKey, _fontSize);

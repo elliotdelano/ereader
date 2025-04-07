@@ -26,9 +26,42 @@ class ThemeProvider with ChangeNotifier {
           // Add other dark theme customizations
         );
       case AppTheme.sepia:
+        // Define Sepia colors
+        const sepiaBackgroundColor = Color(0xFFFBF0D9);
+        const sepiaForegroundColor = Color(
+          0xFF5B4636,
+        ); // Dark brown for text/icons
+        const sepiaAppBarColor = Color(
+          0xFFEFE0C9,
+        ); // Slightly darker/desaturated for app bar
+
         return ThemeData.light(useMaterial3: true).copyWith(
-          scaffoldBackgroundColor: const Color(0xFFfbf0d9),
-          // Add other sepia theme customizations
+          scaffoldBackgroundColor: sepiaBackgroundColor,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: sepiaAppBarColor,
+            foregroundColor: sepiaForegroundColor, // Color for title and icons
+            elevation: 0.5, // Subtle elevation
+          ),
+          textTheme: ThemeData.light().textTheme.apply(
+            // Apply color to default light text theme
+            bodyColor: sepiaForegroundColor,
+            displayColor: sepiaForegroundColor,
+          ),
+          iconTheme: const IconThemeData(
+            color: sepiaForegroundColor,
+          ), // Default icon color
+          // Optionally define a more complete color scheme:
+          colorScheme: ColorScheme.fromSwatch(
+            primarySwatch: Colors.brown, // Or generate from a seed color
+            accentColor: Colors.brown[700],
+            backgroundColor: sepiaBackgroundColor,
+            brightness: Brightness.light,
+          ).copyWith(
+            surface: sepiaBackgroundColor,
+            onSurface: sepiaForegroundColor,
+            // Adjust other colors as needed
+          ),
+          // Customize other elements like buttons, sliders etc. if needed
         );
     }
   }
