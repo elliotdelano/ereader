@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:convert';
+import 'dart:async';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -8,37 +9,60 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_static/shelf_static.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:xml/xml.dart';
+import 'package:shelf_router/shelf_router.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 class EpubServerService {
   HttpServer? _server;
   String? _epubPath;
   String? _tempDir;
-  String? _startPath;
-  String? _customCss; // Store the current CSS
-  Map<String, String>? _manifest;
-  List<String>? _spine;
+  String? _contentBasePath;
+  String? _viewerHtmlContent;
+  String? _opfRelativePath;
 
-  // Add getter for the spine
-  List<String>? get spineHrefs => _spine;
-
-  Future<String?> start(String epubPath, {String? customCss}) async {
+  Future<Map<String, String>?> start(String epubPath) async {
     _epubPath = epubPath;
-    _customCss = customCss;
     try {
       await _unpackEpub();
-      await _parseOpf();
-      _startServer();
-      return _startPath;
+      await _parseOpfAndDetermineBasePath();
+      await _loadViewerHtml();
+
+      // Create a completer to wait for the server to start
+      final completer = Completer<Map<String, String>>();
+
+      _startServer()
+          .then((server) {
+            _server = server;
+            if (_server != null && _opfRelativePath != null) {
+              final response = {
+                'baseUrl': 'http://${_server!.address.host}:${_server!.port}',
+                'opfRelativePath': _opfRelativePath!,
+              };
+              if (!completer.isCompleted) completer.complete(response);
+            } else if (!completer.isCompleted) {
+              completer.completeError(
+                'Server started but OPF path is missing or server is null.',
+              );
+            }
+          })
+          .catchError((e) {
+            print("Error starting server: $e");
+            if (!completer.isCompleted) completer.completeError(e);
+          });
+
+      // Wait for the server to start with a timeout
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print("Server start timed out");
+          throw TimeoutException("Server start timed out");
+        },
+      );
     } catch (e) {
       print('Error starting EPUB server: $e');
-      await stop(); // Clean up on error
-      return null;
+      await stop();
+      rethrow;
     }
-  }
-
-  // Call this to update the CSS, for example when ReaderSettingsProvider changes.
-  void updateCss(String css) {
-    _customCss = css;
   }
 
   Future<void> stop() async {
@@ -52,124 +76,152 @@ class EpubServerService {
     }
     _server = null;
     _tempDir = null;
-    _startPath = null;
-    _manifest = null;
-    _spine = null;
+    _contentBasePath = null;
+    _viewerHtmlContent = null;
+    _opfRelativePath = null;
   }
 
   Future<void> _unpackEpub() async {
+    print('Starting EPUB unpacking process...');
     if (!File(_epubPath!).existsSync()) {
+      print('EPUB file not found at path: $_epubPath');
       throw Exception('EPUB file not found: $_epubPath');
     }
+    print('EPUB file found, reading bytes...');
 
     final bytes = await File(_epubPath!).readAsBytes();
+    print('EPUB file read, decoding zip...');
     final archive = ZipDecoder().decodeBytes(bytes);
+    print('Zip decoded, found ${archive.files.length} files');
 
-    // Find container.xml to locate the OPF file
     final containerEntry = archive.findFile('META-INF/container.xml');
     if (containerEntry == null) {
+      print('container.xml not found in archive');
       throw Exception('Invalid EPUB: Missing container.xml');
     }
+    print('container.xml found in archive');
 
-    _tempDir = '${(await getTemporaryDirectory()).path}/epub_temp';
-    await Directory(_tempDir!).create(recursive: true);
+    _tempDir =
+        '${(await getTemporaryDirectory()).path}/epub_temp_${DateTime.now().millisecondsSinceEpoch}';
+    print('Creating temp directory at: $_tempDir');
 
-    for (final file in archive) {
-      final filename = '$_tempDir/${file.name}';
-      if (file.isFile) {
-        final outFile = File(filename);
-        await outFile.create(recursive: true);
-        await outFile.writeAsBytes(file.content as List<int>);
-      } else {
-        await Directory(filename).create(recursive: true);
-      }
+    if (await Directory(_tempDir!).exists()) {
+      print('Removing existing temp directory');
+      await Directory(_tempDir!).delete(recursive: true);
     }
+    await Directory(_tempDir!).create(recursive: true);
+    print('Temp directory created');
+
+    print('Extracting files...');
+    for (final file in archive) {
+      // Skip directory entries as they're created automatically
+      if (!file.isFile || file.name.endsWith('/')) {
+        print('Skipping directory entry: ${file.name}');
+        continue;
+      }
+
+      final filename = '$_tempDir/${file.name}';
+      final outFile = File(filename);
+      await outFile.parent.create(recursive: true);
+      await outFile.writeAsBytes(file.content as List<int>);
+    }
+    print('EPUB unpacking completed successfully');
   }
 
-  Future<void> _parseOpf() async {
-    // First find the OPF file from container.xml
-    final containerXml = File('$_tempDir/META-INF/container.xml');
-    if (!await containerXml.exists()) {
-      throw Exception('Container.xml not found');
+  Future<void> _parseOpfAndDetermineBasePath() async {
+    final containerXmlPath = '$_tempDir/META-INF/container.xml';
+    print('Checking for container.xml at: $containerXmlPath');
+    if (!await File(containerXmlPath).exists()) {
+      print('Container.xml not found at: $containerXmlPath');
+      throw Exception('Container.xml not found at: $containerXmlPath');
     }
 
-    final containerDoc = XmlDocument.parse(await containerXml.readAsString());
-    final rootfilePath = containerDoc
-        .findAllElements('rootfile')
-        .first
-        .getAttribute('full-path');
+    print('Container.xml found, reading content...');
+    final containerDoc = XmlDocument.parse(
+      await File(containerXmlPath).readAsString(),
+    );
 
-    if (rootfilePath == null) {
+    final rootfilePathAttr = containerDoc
+        .findAllElements('rootfile')
+        .firstOrNull
+        ?.getAttribute('full-path');
+
+    if (rootfilePathAttr == null) {
       throw Exception('Could not find OPF file path in container.xml');
     }
 
-    final opfFile = File('$_tempDir/$rootfilePath');
+    _opfRelativePath = rootfilePathAttr;
+
+    _contentBasePath = p.dirname(rootfilePathAttr);
+    if (_contentBasePath == '.') {
+      _contentBasePath = '';
+    } else if (!_contentBasePath!.endsWith('/')) {
+      _contentBasePath = '$_contentBasePath/';
+    }
+
+    final opfFile = File('$_tempDir/$_opfRelativePath');
+    print('Checking for OPF file at: ${opfFile.path}');
     if (!await opfFile.exists()) {
-      throw Exception('OPF file not found at: $rootfilePath');
+      print('OPF file not found at: ${opfFile.path}');
+      throw Exception('OPF file not found at: ${opfFile.path}');
     }
 
-    final opfDoc = XmlDocument.parse(await opfFile.readAsString());
-
-    // Parse manifest
-    _manifest = {};
-    for (final item in opfDoc.findAllElements('item')) {
-      final id = item.getAttribute('id');
-      final href = item.getAttribute('href');
-      if (id != null && href != null) {
-        _manifest![id] = href;
-      }
-    }
-
-    // Parse spine
-    _spine = [];
-    for (final itemref in opfDoc.findAllElements('itemref')) {
-      final idref = itemref.getAttribute('idref');
-      if (idref != null && _manifest!.containsKey(idref)) {
-        _spine!.add(_manifest![idref]!);
-      }
-    }
-
-    if (_spine!.isEmpty) {
-      throw Exception('No content found in EPUB spine');
-    }
-
-    // Set the start path to the first item in the spine
-    _startPath = 'http://localhost:8080/${_spine!.first}';
+    print("EPUB relative OPF path: $_opfRelativePath");
+    print("EPUB content base path derived: $_contentBasePath");
   }
 
-  // Custom handler that will inject CSS into HTML pages on the fly.
-  Handler _customStaticHandler() {
-    final staticHandler = createStaticHandler(
-      _tempDir ?? '',
-      defaultDocument: 'index.html',
-    );
-
-    return (Request request) async {
-      final response = await staticHandler(request);
-      // Check if the response has an HTML content type and a body to modify
-      if (response.statusCode == 200 &&
-          response.headers['content-type']?.contains('html') == true &&
-          _customCss != null) {
-        // Read the entire response body
-        final body = await response.readAsString();
-        // Inject our custom CSS inside the <head> tag.
-        // Use a more robust regex for the <head> tag
-        final injectedBody = body.replaceFirst(
-          RegExp(r'<head.*?>', caseSensitive: false),
-          '<head><style>${_customCss!}</style>',
-        );
-        return response.change(body: injectedBody);
-      }
-      return response;
-    };
+  Future<void> _loadViewerHtml() async {
+    try {
+      _viewerHtmlContent = await rootBundle.loadString('assets/viewer.html');
+    } catch (e) {
+      print("Error loading assets/viewer.html: $e");
+      throw Exception(
+        "Failed to load viewer.html from assets. Ensure it exists and is listed in pubspec.yaml",
+      );
+    }
   }
 
-  void _startServer() {
-    final handler = Cascade().add(_customStaticHandler()).handler;
+  Future<HttpServer?> _startServer() async {
+    if (_tempDir == null || _viewerHtmlContent == null) {
+      throw Exception(
+        "Server cannot start: temp directory or viewer HTML not ready.",
+      );
+    }
 
-    shelf_io.serve(handler, 'localhost', 8080).then((server) {
-      _server = server;
-      print('Serving at http://${server.address.host}:${server.port}');
+    final router = Router();
+
+    router.get('/viewer.html', (Request request) {
+      return Response.ok(
+        _viewerHtmlContent!,
+        headers: {'Content-Type': 'text/html'},
+      );
     });
+
+    router.get('/js/epub.min.js', (Request request) async {
+      try {
+        final jsContent = await rootBundle.loadString('assets/js/epub.min.js');
+        return Response.ok(
+          jsContent,
+          headers: {'Content-Type': 'application/javascript'},
+        );
+      } catch (e) {
+        print("Error serving epub.min.js: $e");
+        return Response.notFound('epub.min.js not found');
+      }
+    });
+
+    final epubContentHandler = createStaticHandler(_tempDir!);
+    final handler = Cascade().add(router.call).add(epubContentHandler).handler;
+
+    try {
+      final server = await shelf_io.serve(handler, 'localhost', 0);
+      print(
+        'Shelf server listening on http://${server.address.host}:${server.port}',
+      );
+      return server;
+    } catch (e) {
+      print("Error starting shelf server: $e");
+      return null;
+    }
   }
 }

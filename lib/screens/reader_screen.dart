@@ -9,9 +9,9 @@ import '../providers/reader_settings_provider.dart';
 import '../services/storage_service.dart';
 // Import the new provider and widget
 import '../providers/reader_state_provider.dart';
-import '../widgets/html_epub_reader_view.dart';
+import '../widgets/custom_epub_viewer.dart';
 // Keep the old viewer import for commenting out
-// import '../widgets/custom_epub_viewer.dart';
+// import '../widgets/html_epub_reader_view.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Book book;
@@ -201,9 +201,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _buildReaderView(ReaderSettingsProvider settingsProvider) {
     if (widget.book.format == BookFormat.epub) {
-      // *** NEW: Use the HtmlEpubReaderView ***
+      // *** NEW: Use the CustomEpubViewer ***
       // Ensure ReaderStateProvider is provided above this widget
-      return HtmlEpubReaderView(filePath: widget.book.path);
+      return CustomEpubViewer(filePath: widget.book.path);
     } else if (widget.book.format == BookFormat.pdf && _pdfController != null) {
       return SfPdfViewer.asset(widget.book.path, controller: _pdfController);
     } else {
