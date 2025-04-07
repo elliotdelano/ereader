@@ -392,10 +392,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
         if (details.primaryVelocity!.abs() < minSwipeVelocity) return;
 
         if (details.primaryVelocity! < 0) {
-          print("Swipe Left detected, calling nextPage()..."); // DEBUG
           nextPage();
         } else {
-          print("Swipe Right detected, calling previousPage()..."); // DEBUG
           previousPage();
         }
       },
@@ -489,5 +487,62 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
         ),
       ],
     );
+  }
+
+  /// Fetches the Table of Contents as a JSON string from the underlying EPUB.
+  /// Returns null if the ToC cannot be fetched.
+  Future<String?> getTocJson() async {
+    if (_webViewController == null || _isLoading) {
+      print("getTocJson: WebView not ready or still loading.");
+      return null;
+    }
+    try {
+      final result = await _webViewController!.runJavaScriptReturningResult(
+        'getToc();',
+      );
+      // result might be wrapped in quotes, check and handle
+      if (result is String && result.isNotEmpty) {
+        // Basic check if it looks like JSON (starts/ends with [] or {})
+        if ((result.startsWith('[') && result.endsWith(']')) ||
+            (result.startsWith('{') && result.endsWith('}'))) {
+          return result;
+        } else {
+          // Attempt to decode if it seems like a quoted string containing JSON
+          try {
+            return jsonDecode(result)
+                as String; // If JS returns a string that *is* JSON
+          } catch (_) {
+            // If decoding fails, return the raw string if it seems plausible, otherwise null
+            return result; // Or consider returning null if it's definitely not JSON
+          }
+        }
+      } else if (result != null) {
+        print(
+          "getTocJson: Received non-string or empty result: ${result.runtimeType}",
+        );
+        return result.toString(); // Or null? Handle unexpected types
+      }
+      return null;
+    } catch (e) {
+      print("Error calling getToc() in JS: $e");
+      return null;
+    }
+  }
+
+  /// Navigates the EPUB view to the specified href.
+  Future<void> navigateToHref(String href) async {
+    if (_webViewController == null || _isLoading) {
+      print("navigateToHref: WebView not ready or still loading.");
+      return;
+    }
+    // Escape href for JS string literal
+    final escapedHref = href.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+    final jsCode = "navigateToHref('$escapedHref');";
+    try {
+      await _webViewController!.runJavaScript(jsCode);
+      print("Called navigateToHref('$href')");
+    } catch (e) {
+      print("Error calling navigateToHref in JS: $e");
+    }
   }
 }

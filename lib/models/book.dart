@@ -11,7 +11,7 @@ class Book {
   final String title;
   final String? author;
   final String? series;
-  final Uint8List? coverImage;
+  final String? coverImagePath; // Path to saved cover image file
   final DateTime lastModified;
   final DateTime dateAdded;
   final BookFormat format;
@@ -22,7 +22,7 @@ class Book {
     required this.title,
     this.author,
     this.series,
-    this.coverImage,
+    this.coverImagePath,
     required this.lastModified,
     required this.dateAdded,
     required this.format,
@@ -36,7 +36,7 @@ class Book {
       title: metadata.title,
       author: metadata.author,
       series: metadata.series,
-      coverImage: metadata.coverImage,
+      coverImagePath: metadata.coverImagePath,
       lastModified: metadata.lastModified,
       dateAdded: metadata.dateAdded,
       format: metadata.format == 'epub' ? BookFormat.epub : BookFormat.pdf,
@@ -100,7 +100,7 @@ class Book {
       title: title,
       author: author,
       series: series,
-      coverImage: coverImage,
+      coverImagePath: coverImagePath,
       lastModified: lastModified,
       dateAdded: dateAdded,
       format: format,

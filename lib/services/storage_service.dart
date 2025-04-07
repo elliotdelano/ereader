@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/bookmark.dart';
 import 'dart:convert';
+import '../screens/library_screen.dart';
 
 class StorageService {
   static const String _folderPathKey = 'selectedFolderPath';
@@ -19,55 +19,6 @@ class StorageService {
     return prefs.getString(_folderPathKey);
   }
 
-  // --- Bookmarks ---
-
-  // Save bookmarks for a specific book path
-  Future<void> saveBookmarks(String bookPath, List<Bookmark> bookmarks) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = _bookmarksKeyPrefix + bookPath; // Unique key per book
-    final bookmarkStrings = bookmarks.map((b) => b.toString()).toList();
-    await prefs.setStringList(key, bookmarkStrings);
-  }
-
-  // Load bookmarks for a specific book path
-  Future<List<Bookmark>> loadBookmarks(String bookPath) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = _bookmarksKeyPrefix + bookPath;
-    final bookmarkStrings = prefs.getStringList(key) ?? [];
-
-    final List<Bookmark> bookmarks = [];
-    for (final str in bookmarkStrings) {
-      final bookmark = Bookmark.fromString(str);
-      if (bookmark != null) {
-        bookmarks.add(bookmark);
-      }
-    }
-    // Optional: Sort bookmarks by timestamp or location
-    bookmarks.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return bookmarks;
-  }
-
-  // Add a single bookmark
-  Future<void> addBookmark(Bookmark bookmark) async {
-    final currentBookmarks = await loadBookmarks(bookmark.bookPath);
-    // Avoid duplicates (optional, based on location)
-    if (!currentBookmarks.any((b) => b.location == bookmark.location)) {
-      currentBookmarks.add(bookmark);
-      await saveBookmarks(bookmark.bookPath, currentBookmarks);
-    }
-  }
-
-  // Remove a single bookmark
-  Future<void> removeBookmark(Bookmark bookmarkToRemove) async {
-    final currentBookmarks = await loadBookmarks(bookmarkToRemove.bookPath);
-    currentBookmarks.removeWhere(
-      (b) =>
-          b.location == bookmarkToRemove.location &&
-          b.timestamp == bookmarkToRemove.timestamp,
-    );
-    await saveBookmarks(bookmarkToRemove.bookPath, currentBookmarks);
-  }
-
   // --- Reading Progress ---
   static const String _progressKeyPrefix = 'progress_';
 
@@ -83,7 +34,7 @@ class StorageService {
       // Store as a JSON map
       final progressData = {'cfi': cfi, 'percentage': percentage};
       final jsonString = jsonEncode(progressData);
-      print("Saving progress for $bookPath: Data=$jsonString"); // Log saving
+      // print("Saving progress for $bookPath: Data=$jsonString"); // Log saving
       await prefs.setString(key, jsonString);
     } catch (e) {
       print("Error saving reading progress for $bookPath: $e");
@@ -97,15 +48,56 @@ class StorageService {
       final key = _progressKeyPrefix + bookPath;
       final jsonString = prefs.getString(key);
       if (jsonString == null || jsonString.isEmpty) {
-        print("No saved progress found for $bookPath");
+        // print("No saved progress found for $bookPath");
         return null;
       }
       final progressData = jsonDecode(jsonString) as Map<String, dynamic>;
-      print("Loaded progress for $bookPath: Data=$progressData"); // Log loading
+      // print("Loaded progress for $bookPath: Data=$progressData"); // Log loading
       return progressData;
     } catch (e) {
       print("Error loading reading progress for $bookPath: $e");
       return null;
+    }
+  }
+
+  // --- Sort Settings ---
+  static const String _sortOptionKey = 'librarySortOption';
+  static const String _sortDirectionKey = 'librarySortAscending';
+
+  // Save sort preferences
+  Future<void> saveSortSettings(SortOption option, bool ascending) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sortOptionKey, option.name); // Store enum by name
+      await prefs.setBool(_sortDirectionKey, ascending);
+      print("Saved sort settings: Option=${option.name}, Ascending=$ascending");
+    } catch (e) {
+      print("Error saving sort settings: $e");
+    }
+  }
+
+  // Load sort preferences
+  Future<(SortOption, bool)> loadSortSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final optionName = prefs.getString(_sortOptionKey);
+      final ascending = prefs.getBool(_sortDirectionKey);
+
+      // Default to title ascending if nothing is saved
+      final SortOption loadedOption = SortOption.values.firstWhere(
+        (e) => e.name == optionName,
+        orElse: () => SortOption.title, // Default option
+      );
+      final bool loadedAscending = ascending ?? true; // Default direction
+
+      print(
+        "Loaded sort settings: Option=${loadedOption.name}, Ascending=$loadedAscending",
+      );
+      return (loadedOption, loadedAscending);
+    } catch (e) {
+      print("Error loading sort settings: $e");
+      // Return defaults on error
+      return (SortOption.title, true);
     }
   }
 }

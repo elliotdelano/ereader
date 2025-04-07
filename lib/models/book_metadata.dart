@@ -6,7 +6,7 @@ class BookMetadata {
   final String title;
   final String? author;
   final String? series;
-  final Uint8List? coverImage;
+  final String? coverImagePath; // Path to saved cover image file
   final DateTime lastModified;
   final DateTime dateAdded;
   final String format; // 'epub' or 'pdf'
@@ -18,7 +18,7 @@ class BookMetadata {
     required this.title,
     this.author,
     this.series,
-    this.coverImage,
+    this.coverImagePath,
     required this.lastModified,
     required this.dateAdded,
     required this.format,
@@ -33,7 +33,7 @@ class BookMetadata {
       'title': title,
       'author': author,
       'series': series,
-      'coverImage': coverImage,
+      'coverImagePath': coverImagePath,
       'lastModified': lastModified.toIso8601String(),
       'dateAdded': dateAdded.toIso8601String(),
       'format': format,
@@ -49,7 +49,7 @@ class BookMetadata {
       title: map['title'],
       author: map['author'],
       series: map['series'],
-      coverImage: map['coverImage'] as Uint8List?,
+      coverImagePath: map['coverImagePath'] as String?,
       lastModified: DateTime.parse(map['lastModified']),
       dateAdded: DateTime.parse(map['dateAdded']),
       format: map['format'],

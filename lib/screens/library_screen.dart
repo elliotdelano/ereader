@@ -5,6 +5,7 @@ import '../services/file_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/book_edit_sheet.dart';
 import 'reader_screen.dart';
+import '../widgets/book_search_delegate.dart';
 
 enum SortOption { title, author, dateAdded, lastModified, series }
 
@@ -35,16 +36,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _isLoading = true;
     });
 
+    // Load sort settings first
+    final (loadedSortOption, loadedSortAscending) =
+        await _storageService.loadSortSettings();
+
     try {
       final savedPath = await _storageService.getSelectedFolderPath();
       if (savedPath != null) {
         setState(() {
+          // Apply loaded settings before loading books
+          _currentSort = loadedSortOption;
+          _sortAscending = loadedSortAscending;
           _selectedDirectory = savedPath;
         });
         await _loadBooks();
+      } else {
+        // No saved path, but still apply loaded/default sort settings
+        setState(() {
+          _currentSort = loadedSortOption;
+          _sortAscending = loadedSortAscending;
+        });
       }
     } catch (e) {
-      print('Error loading saved directory: $e');
+      print('Error loading saved directory or settings: $e');
     } finally {
       setState(() {
         _isLoading = false;
@@ -165,6 +179,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _saveSortSettings() async {
+    await _storageService.saveSortSettings(_currentSort, _sortAscending);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -178,13 +196,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
             onSelected: (SortOption option) {
               setState(() {
                 if (_currentSort == option) {
-                  // Toggle direction if same option selected
+                  // Direction is toggled by the dedicated button now
                   _sortAscending = !_sortAscending;
                 } else {
                   _currentSort = option;
-                  _sortAscending = true;
+                  _sortAscending =
+                      true; // Default to ascending when changing sort type
                 }
                 _sortBooks();
+                _saveSortSettings(); // Save settings when sort type changes
               });
             },
             itemBuilder:
@@ -211,15 +231,45 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ],
           ),
+          // Sort Direction Toggle Button
+          IconButton(
+            icon: Icon(
+              _sortAscending ? Icons.arrow_downward : Icons.arrow_upward,
+            ),
+            tooltip: _sortAscending ? 'Sort Descending' : 'Sort Ascending',
+            onPressed: () {
+              setState(() {
+                _sortAscending = !_sortAscending;
+                _sortBooks();
+                _saveSortSettings(); // Save settings when direction changes
+              });
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.folder_open),
             onPressed: _selectDirectory,
             tooltip: 'Select Ebook Folder',
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadBooks,
-            tooltip: 'Refresh Library',
+            icon: const Icon(Icons.search),
+            tooltip: 'Search Library',
+            onPressed: () async {
+              // Show the search page and wait for a result (a selected Book or null)
+              final Book? selectedBook = await showSearch<Book?>(
+                context: context,
+                delegate: BookSearchDelegate(allBooks: _books),
+              );
+
+              // If the user selected a book from search, navigate to it
+              if (selectedBook != null && mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ReaderScreen(book: selectedBook),
+                  ),
+                );
+              }
+            },
           ),
         ],
       ),
@@ -256,102 +306,108 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ],
                 ),
               )
-              : ListView.builder(
-                itemCount: _books.length,
-                itemBuilder: (context, index) {
-                  final book = _books[index];
-                  return ListTile(
-                    leading:
-                        book.coverImage != null
-                            ? ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: Image.memory(
-                                book.coverImage!,
-                                width: 40,
-                                height: 60,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return _buildDefaultIcon(book);
-                                },
+              : RefreshIndicator(
+                onRefresh: _loadBooks,
+                child: ListView.builder(
+                  itemCount: _books.length,
+                  itemBuilder: (context, index) {
+                    final book = _books[index];
+                    return ListTile(
+                      leading:
+                          book.coverImagePath != null &&
+                                  book.coverImagePath!.isNotEmpty
+                              ? ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: Image.file(
+                                  File(book.coverImagePath!),
+                                  width: 40,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return _buildDefaultIcon(book);
+                                  },
+                                ),
+                              )
+                              : _buildDefaultIcon(book),
+                      title: Text(book.title),
+                      isThreeLine:
+                          book.readingPercentage != null &&
+                          book.readingPercentage! > 0.01,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(book.author ?? 'Unknown Author'),
+                          if (book.readingPercentage != null &&
+                              book.readingPercentage! > 0.01) ...[
+                            const SizedBox(height: 4),
+                            LinearProgressIndicator(
+                              value: book.readingPercentage!,
+                              minHeight: 6,
+                              backgroundColor:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainer,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.primary,
                               ),
-                            )
-                            : _buildDefaultIcon(book),
-                    title: Text(book.title),
-                    isThreeLine:
-                        book.readingPercentage != null &&
-                        book.readingPercentage! > 0.01,
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(book.author ?? 'Unknown Author'),
-                        if (book.readingPercentage != null &&
-                            book.readingPercentage! > 0.01) ...[
-                          const SizedBox(height: 4),
-                          LinearProgressIndicator(
-                            value: book.readingPercentage!,
-                            minHeight: 6,
-                            backgroundColor:
-                                Theme.of(context).colorScheme.surfaceContainer,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Theme.of(context).colorScheme.primary,
-                            ),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ],
-                      ],
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      itemBuilder:
-                          (context) => [
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Edit'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Delete'),
+                              borderRadius: BorderRadius.circular(4),
                             ),
                           ],
-                      onSelected: (value) async {
-                        if (value == 'edit') {
-                          await showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            useSafeArea: true,
-                            builder:
-                                (context) => Padding(
-                                  padding: EdgeInsets.only(
-                                    bottom:
-                                        MediaQuery.of(
-                                          context,
-                                        ).viewInsets.bottom,
+                        ],
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        itemBuilder:
+                            (context) => [
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
+                        onSelected: (value) async {
+                          if (value == 'edit') {
+                            await showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              useSafeArea: true,
+                              builder:
+                                  (context) => Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom:
+                                          MediaQuery.of(
+                                            context,
+                                          ).viewInsets.bottom,
+                                    ),
+                                    child: BookEditSheet(
+                                      book: book,
+                                      onBookUpdated: (updatedBook) {
+                                        setState(() {
+                                          _books[index] = updatedBook;
+                                          _sortBooks();
+                                        });
+                                      },
+                                    ),
                                   ),
-                                  child: BookEditSheet(
-                                    book: book,
-                                    onBookUpdated: (updatedBook) {
-                                      setState(() {
-                                        _books[index] = updatedBook;
-                                        _sortBooks();
-                                      });
-                                    },
-                                  ),
-                                ),
-                          );
-                        } else if (value == 'delete') {
-                          // Handle delete
-                        }
+                            );
+                          } else if (value == 'delete') {
+                            // Handle delete
+                          }
+                        },
+                      ),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ReaderScreen(book: book),
+                          ),
+                        );
                       },
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ReaderScreen(book: book),
-                        ),
-                      );
-                    },
-                  );
-                },
+                    );
+                  },
+                ),
               ),
     );
   }

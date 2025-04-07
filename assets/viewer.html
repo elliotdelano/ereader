@@ -143,6 +143,10 @@
 							}
 						});
 
+					window.epubBook.loaded.navigation.then((toc) => {
+						window.epub_toc = toc;
+					});
+
 					// --- Event Listeners ---
 					window.epubRendition.on("locationChanged", (location) => {
 						// console.log(
@@ -330,6 +334,58 @@
 				};
 
 				window.FlutterChannel.postMessage(JSON.stringify(message));
+			}
+
+			// --- ToC / Navigation Functions ---
+
+			// Helper to flatten the ToC structure and add depth
+			function flattenToc(items, depth = 0) {
+				let flatList = [];
+				if (!items) return flatList;
+				items.forEach((item) => {
+					flatList.push({
+						label: item.label.trim(),
+						href: item.href,
+						depth: depth,
+					});
+					if (item.subitems && item.subitems.length > 0) {
+						flatList = flatList.concat(
+							flattenToc(item.subitems, depth + 1)
+						);
+					}
+				});
+				return flatList;
+			}
+
+			// Function to get flattened ToC (called by Flutter)
+			function getToc() {
+				if (!window.epub_toc) {
+					console.warn(
+						"getToc: Book or navigation or toc not available."
+					);
+					return JSON.stringify([]); // Return empty array string
+				}
+				try {
+					const flatToc = flattenToc(window.epub_toc);
+					return JSON.stringify(flatToc);
+				} catch (err) {
+					console.error("Error processing ToC:", err);
+					return JSON.stringify([]); // Return empty on error
+				}
+			}
+
+			// Function to navigate to a specific href (called by Flutter)
+			function navigateToHref(href) {
+				if (!window.epubRendition) {
+					console.error("navigateToHref: Rendition not available.");
+					return;
+				}
+				console.log("Navigating to href:", href);
+				try {
+					window.epubRendition.display(href);
+				} catch (err) {
+					console.error("Error navigating to href:", href, err);
+				}
 			}
 		</script>
 	</body>

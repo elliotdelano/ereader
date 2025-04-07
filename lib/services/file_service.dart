@@ -10,6 +10,8 @@ import '../models/book.dart';
 import '../models/book_metadata.dart';
 import 'database_service.dart';
 import 'dart:ui' as ui;
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 
 class FileService {
   final DatabaseService _databaseService = DatabaseService();
@@ -56,8 +58,8 @@ class FileService {
       final bytes = await File(epubPath).readAsBytes();
       final epubBook = await EpubReader.openBook(bytes);
 
-      // Extract cover image using epubx's built-in functionality
-      Uint8List? coverImage;
+      // Extract and save cover image
+      String? coverImagePath;
 
       try {
         final coverImageContent = await epubBook.readCover();
@@ -81,7 +83,24 @@ class FileService {
               format: ui.ImageByteFormat.png,
             );
             if (pngBytes != null) {
-              coverImage = pngBytes.buffer.asUint8List();
+              // Get app docs directory
+              final docDir = await getApplicationDocumentsDirectory();
+              final coversDir = Directory(path.join(docDir.path, 'covers'));
+              if (!await coversDir.exists()) {
+                await coversDir.create(recursive: true);
+              }
+
+              // Generate filename from hash of book path
+              final bookPathBytes = utf8.encode(epubPath);
+              final digest = sha1.convert(bookPathBytes);
+              final filename = '${digest.toString()}.png';
+              final filePath = path.join(coversDir.path, filename);
+
+              // Save the image file
+              final imageFile = File(filePath);
+              await imageFile.writeAsBytes(pngBytes.buffer.asUint8List());
+              coverImagePath = filePath;
+              print("Saved cover image to: $coverImagePath");
             }
 
             // Clean up
@@ -90,7 +109,7 @@ class FileService {
           }
         }
       } catch (e) {
-        print("Error extracting cover image: $e");
+        print("Error processing or saving cover image: $e");
         // Continue without cover image if extraction fails
       }
 
@@ -99,13 +118,13 @@ class FileService {
         title: epubBook.Title ?? Book.getTitleFromPath(epubPath),
         author: epubBook.Author,
         series: null, // EPUB standard doesn't have a series field
-        coverImage: coverImage,
+        coverImagePath: coverImagePath,
         lastModified: File(epubPath).lastModifiedSync(),
         dateAdded: DateTime.now(),
         format: 'epub',
       );
     } catch (e) {
-      print("Error extracting EPUB metadata: $e");
+      print("Error extracting EPUB metadata for $epubPath: $e");
       return null;
     }
   }
@@ -113,14 +132,12 @@ class FileService {
   // Extract metadata from a PDF file
   Future<BookMetadata?> _extractPdfMetadata(String path) async {
     try {
-      // For PDFs, we'll just use basic file information for now
-      // In a real app, you might want to use a PDF parsing library
       return BookMetadata(
         path: path,
         title: Book.getTitleFromPath(path),
         author: null,
         series: null,
-        coverImage: null,
+        coverImagePath: null,
         lastModified: File(path).lastModifiedSync(),
         dateAdded: DateTime.now(),
         format: 'pdf',
@@ -157,36 +174,61 @@ class FileService {
             BookMetadata? existingMetadata = await _databaseService
                 .getBookByPath(entity.path);
 
+            bool metadataNeedsUpdate = false;
             if (existingMetadata == null) {
-              // New book found, extract and store metadata
-              BookMetadata? metadata;
-              if (format == BookFormat.epub) {
-                metadata = await _extractEpubMetadata(entity.path);
-              } else if (format == BookFormat.pdf) {
-                metadata = await _extractPdfMetadata(entity.path);
-              }
-
-              if (metadata != null) {
-                await _databaseService.insertBook(metadata);
-                existingMetadata = metadata;
+              // New book: Extract, store metadata, set flag
+              metadataNeedsUpdate = true;
+            } else {
+              // Existing book: Check if file modified time is newer than stored
+              final fileLastModified = File(entity.path).lastModifiedSync();
+              if (fileLastModified.isAfter(existingMetadata.lastModified)) {
+                // File changed: Re-extract, update metadata, set flag
+                metadataNeedsUpdate = true;
+                print(
+                  "File modified, re-extracting metadata for: ${entity.path}",
+                );
               }
             }
 
-            // Create Book instance for the UI
-            books.add(
-              Book(
-                path: entity.path,
-                title:
-                    existingMetadata?.title ??
-                    Book.getTitleFromPath(entity.path),
-                format: format,
-                lastModified: File(entity.path).lastModifiedSync(),
-                dateAdded: existingMetadata?.dateAdded ?? DateTime.now(),
-                author: existingMetadata?.author,
-                series: existingMetadata?.series,
-                coverImage: existingMetadata?.coverImage,
-              ),
-            );
+            // If new or changed, extract/update metadata in DB
+            if (metadataNeedsUpdate) {
+              BookMetadata? extractedMetadata;
+              if (format == BookFormat.epub) {
+                extractedMetadata = await _extractEpubMetadata(entity.path);
+              } else if (format == BookFormat.pdf) {
+                extractedMetadata = await _extractPdfMetadata(entity.path);
+              }
+
+              if (extractedMetadata != null) {
+                if (existingMetadata == null) {
+                  await _databaseService.insertBook(extractedMetadata);
+                } else {
+                  // Preserve ID when updating
+                  await _databaseService.updateBook(extractedMetadata);
+                }
+                existingMetadata = await _databaseService.getBookByPath(
+                  entity.path,
+                );
+              }
+            }
+
+            // Create Book instance using the latest metadata (either existing or updated)
+            if (existingMetadata != null) {
+              books.add(Book.fromMetadata(existingMetadata));
+            } else {
+              print(
+                "Warning: Could not get metadata for ${entity.path}, creating Book with fallback title.",
+              );
+              books.add(
+                Book(
+                  path: entity.path,
+                  title: Book.getTitleFromPath(entity.path),
+                  format: format,
+                  lastModified: File(entity.path).lastModifiedSync(),
+                  dateAdded: DateTime.now(),
+                ),
+              );
+            }
           }
         }
       }

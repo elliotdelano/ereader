@@ -20,7 +20,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'ereader.db');
     return await openDatabase(
       path,
-      version: 2, // Increment version to trigger migration
+      version: 5, // Increment version for coverImagePath
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -34,42 +34,19 @@ class DatabaseService {
         title TEXT NOT NULL,
         author TEXT,
         series TEXT,
-        coverImage BLOB,
+        coverImagePath TEXT,
         lastModified TEXT NOT NULL,
         dateAdded TEXT NOT NULL,
-        format TEXT NOT NULL
+        format TEXT NOT NULL,
+        readingPercentage REAL
       )
     ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      // Create a temporary table with the new schema
-      await db.execute('''
-        CREATE TABLE books_new(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          path TEXT UNIQUE,
-          title TEXT NOT NULL,
-          author TEXT,
-          series TEXT,
-          coverImage BLOB,
-          lastModified TEXT NOT NULL,
-          dateAdded TEXT NOT NULL,
-          format TEXT NOT NULL
-        )
-      ''');
-
-      // Copy data from the old table to the new table
-      await db.execute('''
-        INSERT INTO books_new (id, path, title, author, series, lastModified, dateAdded, format)
-        SELECT id, path, title, author, series, lastModified, dateAdded, format FROM books
-      ''');
-
-      // Drop the old table
-      await db.execute('DROP TABLE books');
-
-      // Rename the new table to the original name
-      await db.execute('ALTER TABLE books_new RENAME TO books');
+    if (oldVersion < 5) {
+      await db.delete('books');
+      print("Database upgraded to V5 (deleted books table)");
     }
   }
 

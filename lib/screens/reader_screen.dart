@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'dart:convert';
 
 import '../models/book.dart';
-import '../models/bookmark.dart';
 import '../providers/theme_provider.dart';
 import '../providers/reader_settings_provider.dart';
 import '../services/storage_service.dart';
@@ -24,14 +24,10 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   final StorageService _storageService = StorageService();
-  List<Bookmark> _bookmarks = [];
   PdfViewerController? _pdfController;
   String? _initialCfi;
   bool _isLoadingProgress = true;
-
-  // Comment out the key for the old viewer
-  // final GlobalKey<CustomEpubViewerState> _epubViewerKey =
-  //     GlobalKey<CustomEpubViewerState>();
+  final GlobalKey<CustomEpubViewerState> _epubViewerKey = GlobalKey();
 
   // Placeholder for current location (page number for PDF, locator for EPUB)
   final String _currentLocation = '';
@@ -50,77 +46,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void dispose() {
     _pdfController?.dispose(); // Dispose if it was created
     super.dispose();
-  }
-
-  Future<void> _loadBookmarks() async {
-    _bookmarks = await _storageService.loadBookmarks(widget.book.path);
-    setState(() {}); // Update UI if needed
-  }
-
-  Future<void> _addBookmark() async {
-    String locationToAdd = _currentLocation; // Default to EPUB locator
-
-    if (widget.book.format == BookFormat.pdf && _pdfController != null) {
-      // Get current page for PDF
-      locationToAdd = _pdfController!.pageNumber.toString();
-    }
-
-    if (locationToAdd.isNotEmpty) {
-      final newBookmark = Bookmark(
-        bookPath: widget.book.path,
-        location: locationToAdd,
-        timestamp: DateTime.now(),
-      );
-      await _storageService.addBookmark(newBookmark);
-      _loadBookmarks(); // Refresh the list
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bookmark added at $locationToAdd')),
-      );
-    }
-  }
-
-  // Placeholder for showing bookmarks
-  void _showBookmarks() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) {
-        return ListView.builder(
-          itemCount: _bookmarks.length,
-          itemBuilder: (context, index) {
-            final bookmark = _bookmarks[index];
-            return ListTile(
-              title: Text('Location: ${bookmark.location}'),
-              subtitle: Text(bookmark.timestamp.toString()),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () async {
-                  await _storageService.removeBookmark(bookmark);
-                  _loadBookmarks(); // Refresh list
-                  Navigator.pop(context); // Close bottom sheet
-                },
-              ),
-              onTap: () {
-                // Navigate to bookmark location
-                _gotoBookmark(bookmark);
-                Navigator.pop(context); // Close bottom sheet
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-
-  // Placeholder for navigating to a bookmark
-  void _gotoBookmark(Bookmark bookmark) {
-    if (widget.book.format == BookFormat.pdf && _pdfController != null) {
-      // syncfusion_flutter_pdfviewer uses page number
-      final page = int.tryParse(bookmark.location);
-      if (page != null) {
-        _pdfController!.jumpToPage(page);
-        print("Go to PDF page: $page");
-      }
-    }
   }
 
   // Placeholder for showing settings (theme, font)
@@ -172,7 +97,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    await _loadBookmarks();
     if (widget.book.format == BookFormat.epub) {
       // Load the progress map
       final progressData = await _storageService.loadReadingProgress(
@@ -192,6 +116,137 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  Future<void> _showTableOfContents() async {
+    // Ensure it's an EPUB and the key is valid
+    if (widget.book.format != BookFormat.epub ||
+        _epubViewerKey.currentState == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Table of Contents not available for this format or viewer not ready.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Show loading indicator while fetching
+    showDialog(
+      context: context,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+      barrierDismissible: false,
+    );
+
+    final tocJson = await _epubViewerKey.currentState!.getTocJson();
+
+    Navigator.pop(context); // Dismiss loading indicator
+
+    if (tocJson == null || tocJson.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load Table of Contents.')),
+      );
+      return;
+    }
+
+    try {
+      final List<dynamic> tocRaw = jsonDecode(tocJson);
+      final List<Map<String, dynamic>> tocList =
+          List<Map<String, dynamic>>.from(tocRaw);
+
+      if (tocList.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Table of Contents is empty.')),
+        );
+        return;
+      }
+
+      showModalBottomSheet(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) {
+          return DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.6, // Start at 60% height
+            minChildSize: 0.3, // Min 30% height
+            maxChildSize: 0.9, // Max 90% height
+            builder: (context, scrollController) {
+              return Column(
+                children: [
+                  // Handle for dragging
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Container(
+                      width: 40,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[400],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      bottom: 8.0,
+                      left: 16.0,
+                      right: 16.0,
+                    ),
+                    child: Text(
+                      "Table of Contents",
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      itemCount: tocList.length,
+                      itemBuilder: (context, index) {
+                        final item = tocList[index];
+                        final String label = item['label'] ?? 'Untitled';
+                        final String? href = item['href'];
+                        final int depth = item['depth'] ?? 0;
+
+                        return ListTile(
+                          contentPadding: EdgeInsets.only(
+                            left: 16.0 + (depth * 16.0),
+                            right: 16.0,
+                          ), // Indentation
+                          title: Text(
+                            label,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          dense: true,
+                          onTap:
+                              href == null
+                                  ? null
+                                  : () {
+                                    print("Navigating to: $href");
+                                    _epubViewerKey.currentState?.navigateToHref(
+                                      href,
+                                    );
+                                    Navigator.pop(
+                                      context,
+                                    ); // Close the bottom sheet
+                                  },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } catch (e) {
+      print("Error decoding or displaying ToC: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error displaying Table of Contents.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Access providers
@@ -201,16 +256,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       appBar: AppBar(
         title: Text(widget.book.title),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bookmark_add_outlined),
-            tooltip: 'Add Bookmark',
-            onPressed: _addBookmark,
-          ),
-          IconButton(
-            icon: const Icon(Icons.bookmark_outline),
-            tooltip: 'View Bookmarks',
-            onPressed: _showBookmarks,
-          ),
+          if (widget.book.format == BookFormat.epub)
+            IconButton(
+              icon: const Icon(Icons.list), // Or Icons.toc
+              tooltip: 'Table of Contents',
+              onPressed: _showTableOfContents,
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',
@@ -228,6 +279,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       return CustomEpubViewer(
+        key: _epubViewerKey,
         filePath: widget.book.path,
         initialCfi: _initialCfi,
       );

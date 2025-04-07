@@ -62,7 +62,7 @@ class _BookEditSheetState extends State<BookEditSheet> {
             _seriesController.text.trim().isEmpty
                 ? null
                 : _seriesController.text.trim(),
-        coverImage: widget.book.coverImage,
+        coverImagePath: widget.book.coverImagePath,
         lastModified: widget.book.lastModified,
         dateAdded: widget.book.dateAdded,
         format: widget.book.format == BookFormat.epub ? 'epub' : 'pdf',
