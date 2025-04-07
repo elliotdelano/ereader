@@ -197,10 +197,23 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
       jsInitialCfiArg = "'$escapedCfi'"; // Wrap in single quotes
     }
 
+    // Calculate adjusted width (multiple of 12 physical pixels) - REVERTING TO ROUND LOGICAL WIDTH
+    // Use context safely, ensure it's available
+    if (!mounted) return; // Check if widget is still mounted
+    final queryData = MediaQuery.of(context);
+    final screenWidthLogical = queryData.size.width;
+    final screenHeightLogical =
+        queryData.size.height -
+        queryData.padding.top -
+        queryData.padding.bottom; // Usable height
+
+    // Calculate nearest multiple of 12 for the LOGICAL width
+    final roundedLogicalWidth = (screenWidthLogical / 12).round() * 12;
     // Pass the channel object directly by its name
     // Pass the escaped initial CFI
+    // Pass the ROUNDED LOGICAL width and calculated height
     final jsCode = '''
-       initializeEpubReader('$escapedOpfPath', $jsInitialCfiArg);
+       initializeEpubReader('$escapedOpfPath', $jsInitialCfiArg, $roundedLogicalWidth, $screenHeightLogical);
     ''';
     try {
       await _webViewController!.runJavaScript(jsCode);
@@ -385,21 +398,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
 
     Widget webViewWidget = WebViewWidget(controller: _webViewController!);
 
-    return GestureDetector(
-      onHorizontalDragEnd: (details) {
-        if (details.primaryVelocity == 0) return;
-        const double minSwipeVelocity = 100.0;
-        if (details.primaryVelocity!.abs() < minSwipeVelocity) return;
-
-        if (details.primaryVelocity! < 0) {
-          nextPage();
-        } else {
-          previousPage();
-        }
-      },
-      dragStartBehavior: DragStartBehavior.down,
-      child: webViewWidget,
-    );
+    return webViewWidget;
   }
 
   @override
@@ -460,28 +459,48 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
               ThemeProvider
             >(); // Use read here if only needed for color value
     final bool isDark = themeProviderRead.currentTheme == AppTheme.dark;
-    final Color textColor = isDark ? Colors.white70 : Colors.black54;
-    final Color backgroundColor =
-        isDark ? Colors.black.withAlpha(100) : Colors.white.withAlpha(150);
+    final double screenWidth = MediaQuery.of(context).size.width;
+
+    // Progress bar colors
+    final Color lineBackgroundColor =
+        isDark ? Colors.grey.shade800 : Colors.grey.shade300;
+    final Color indicatorColor =
+        isDark ? Colors.grey.shade800 : Colors.grey.shade300;
 
     return Stack(
       children: [
         _buildPlatformWebView(),
         Positioned(
-          bottom: 5,
+          bottom: 10,
           left: 0,
           right: 0,
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: backgroundColor,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                '${(_bookPercentage * 100).toStringAsFixed(1)}%',
-                style: TextStyle(color: textColor, fontSize: 12),
-              ),
+          child: SizedBox(
+            height: 10, // Height for the tappable area / visual space
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                // Background Line
+                Container(
+                  height: 2.0,
+                  color: lineBackgroundColor,
+                  margin: const EdgeInsets.only(left: 15, right: 15),
+                ),
+                // Indicator Dot
+                Positioned(
+                  left:
+                      15 +
+                      ((screenWidth - 30) * _bookPercentage) -
+                      5, // Center dot over position
+                  child: Container(
+                    width: 10.0,
+                    height: 10.0,
+                    decoration: BoxDecoration(
+                      color: indicatorColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

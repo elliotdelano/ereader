@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../models/book.dart';
 import '../models/book_metadata.dart';
 import '../services/database_service.dart';
+import '../services/storage_service.dart';
 
 class BookEditSheet extends StatefulWidget {
   final Book book;
@@ -24,7 +25,9 @@ class _BookEditSheetState extends State<BookEditSheet> {
   final _authorController = TextEditingController();
   final _seriesController = TextEditingController();
   final DatabaseService _databaseService = DatabaseService();
+  final StorageService _storageService = StorageService();
   bool _isLoading = false;
+  bool _isCurrentlyReading = false;
 
   @override
   void initState() {
@@ -32,6 +35,16 @@ class _BookEditSheetState extends State<BookEditSheet> {
     _titleController.text = widget.book.title;
     _authorController.text = widget.book.author ?? '';
     _seriesController.text = widget.book.series ?? '';
+    _loadCurrentlyReadingStatus();
+  }
+
+  Future<void> _loadCurrentlyReadingStatus() async {
+    final currentSet = await _storageService.loadCurrentlyReading();
+    if (mounted) {
+      setState(() {
+        _isCurrentlyReading = currentSet.contains(widget.book.path);
+      });
+    }
   }
 
   @override
@@ -42,6 +55,39 @@ class _BookEditSheetState extends State<BookEditSheet> {
     super.dispose();
   }
 
+  Future<void> _toggleCurrentlyReading(bool value) async {
+    setState(() {
+      _isCurrentlyReading = value;
+      _isLoading = true;
+    });
+
+    try {
+      final currentSet = await _storageService.loadCurrentlyReading();
+      if (value) {
+        currentSet.add(widget.book.path);
+      } else {
+        currentSet.remove(widget.book.path);
+      }
+      await _storageService.saveCurrentlyReading(currentSet);
+      print("Set currently reading for ${widget.book.path} to: $value");
+    } catch (e) {
+      setState(() {
+        _isCurrentlyReading = !value;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error updating status: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _saveChanges() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -50,7 +96,6 @@ class _BookEditSheetState extends State<BookEditSheet> {
     });
 
     try {
-      // Create updated metadata
       final updatedMetadata = BookMetadata(
         path: widget.book.path,
         title: _titleController.text.trim(),
@@ -68,16 +113,12 @@ class _BookEditSheetState extends State<BookEditSheet> {
         format: widget.book.format == BookFormat.epub ? 'epub' : 'pdf',
       );
 
-      // Update in database
       await _databaseService.updateBook(updatedMetadata);
 
-      // Create updated book object
       final updatedBook = Book.fromMetadata(updatedMetadata);
 
-      // Notify parent
       widget.onBookUpdated(updatedBook);
 
-      // Close the bottom sheet
       if (mounted) {
         Navigator.pop(context);
       }
@@ -149,6 +190,17 @@ class _BookEditSheetState extends State<BookEditSheet> {
                   decoration: const InputDecoration(
                     labelText: 'Series',
                     border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Currently Reading'),
+                  value: _isCurrentlyReading,
+                  onChanged: _isLoading ? null : _toggleCurrentlyReading,
+                  secondary: Icon(
+                    _isCurrentlyReading
+                        ? Icons.bookmark
+                        : Icons.bookmark_border,
                   ),
                 ),
                 const SizedBox(height: 24),

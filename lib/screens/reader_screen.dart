@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 
 import '../models/book.dart';
 import '../providers/theme_provider.dart';
 import '../providers/reader_settings_provider.dart';
 import '../services/storage_service.dart';
-// Import the new provider and widget
-import '../providers/reader_state_provider.dart';
 import '../widgets/custom_epub_viewer.dart';
-// Keep the old viewer import for commenting out
-// import '../widgets/html_epub_reader_view.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Book book;
@@ -27,6 +24,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   PdfViewerController? _pdfController;
   String? _initialCfi;
   bool _isLoadingProgress = true;
+  bool _isAppBarVisible = false;
   final GlobalKey<CustomEpubViewerState> _epubViewerKey = GlobalKey();
 
   // Placeholder for current location (page number for PDF, locator for EPUB)
@@ -35,16 +33,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: [SystemUiOverlay.top],
+    );
     _loadInitialData();
     if (widget.book.format == BookFormat.pdf) {
       _pdfController = PdfViewerController();
     }
+    _markAsCurrentlyReading();
     // For EPUB, we now use a custom EPUB viewer widget. No controller needed.
   }
 
   @override
   void dispose() {
     _pdfController?.dispose(); // Dispose if it was created
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -247,29 +251,138 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  void _handleTap(TapUpDetails details) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final tapX = details.localPosition.dx;
+
+    // Define tap zones (adjust percentages as needed)
+    final leftZoneEnd = screenWidth * 0.35;
+    final rightZoneStart = screenWidth * 0.65;
+
+    if (tapX < leftZoneEnd) {
+      // Tap on left: Previous page
+      _epubViewerKey.currentState?.previousPage();
+    } else if (tapX > rightZoneStart) {
+      // Tap on right: Next page
+      _epubViewerKey.currentState?.nextPage();
+    } else {
+      // Tap in center: Toggle AppBar and System UI
+      setState(() {
+        _isAppBarVisible = !_isAppBarVisible;
+      });
+
+      // Update System UI based on AppBar visibility
+      if (_isAppBarVisible) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: [SystemUiOverlay.top],
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Access providers
     final settingsProvider = Provider.of<ReaderSettingsProvider>(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final topPadding = MediaQuery.of(context).padding.top;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.book.title),
-        actions: [
-          if (widget.book.format == BookFormat.epub)
-            IconButton(
-              icon: const Icon(Icons.list), // Or Icons.toc
-              tooltip: 'Table of Contents',
-              onPressed: _showTableOfContents,
+    // Determine Status Bar Style based on Theme
+    final bool isDarkMode = themeProvider.currentTheme == AppTheme.dark;
+    final SystemUiOverlayStyle overlayStyle = SystemUiOverlayStyle(
+      statusBarColor:
+          isDarkMode
+              ? Colors.black
+              : Colors
+                  .transparent, // Black background for dark mode, transparent otherwise
+      statusBarIconBrightness:
+          isDarkMode
+              ? Brightness.light
+              : Brightness.dark, // Light icons for dark mode, dark otherwise
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // Main content with padding
+            Padding(
+              padding: EdgeInsets.only(top: topPadding),
+              child: _buildReaderView(settingsProvider),
             ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: _showSettings,
-          ),
-        ],
+            // Invisible gesture detector covering only the main content area
+            // Placed *before* the AppBar in the Stack order
+            Positioned(
+              top: topPadding,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTapUp: _handleTap,
+                behavior:
+                    HitTestBehavior
+                        .translucent, // Allows taps to pass through if needed, but primarily for AppBar toggle
+              ),
+            ),
+            // Floating AppBar with fade animation
+            // Placed *after* the GestureDetector, so it's on top when visible
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _isAppBarVisible ? 1.0 : 0.0,
+                child: IgnorePointer(
+                  ignoring:
+                      !_isAppBarVisible, // Allows interaction ONLY when visible
+                  child: SafeArea(
+                    bottom: false,
+                    child: Container(
+                      margin: const EdgeInsets.only(left: 8, right: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).scaffoldBackgroundColor.withAlpha(230),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withAlpha(100),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: AppBar(
+                        backgroundColor: Colors.transparent,
+                        elevation: 0,
+                        title: Text(widget.book.title),
+                        actions: [
+                          if (widget.book.format == BookFormat.epub)
+                            IconButton(
+                              icon: const Icon(Icons.list),
+                              tooltip: 'Table of Contents',
+                              onPressed: _showTableOfContents,
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.settings_outlined),
+                            tooltip: 'Settings',
+                            onPressed: _showSettings,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      body: _buildReaderView(settingsProvider),
     );
   }
 
@@ -289,6 +402,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return const Center(
         child: Text('Unsupported file format or error loading viewer.'),
       );
+    }
+  }
+
+  // NEW Method to mark book as currently reading
+  Future<void> _markAsCurrentlyReading() async {
+    try {
+      final currentSet = await _storageService.loadCurrentlyReading();
+      if (!currentSet.contains(widget.book.path)) {
+        currentSet.add(widget.book.path);
+        await _storageService.saveCurrentlyReading(currentSet);
+        print("Marked ${widget.book.path} as currently reading.");
+      }
+    } catch (e) {
+      print("Error marking book as currently reading: $e");
     }
   }
 }

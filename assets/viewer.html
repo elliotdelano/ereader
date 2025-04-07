@@ -33,16 +33,17 @@
 		<style>
 			/* Basic styles to make viewer fill screen */
 			body {
-				margin: 0;
-				padding: 0;
-				overflow: hidden;
-				background-color: white; /* Default background */
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				margin: 0; /* Remove default body margin */
+				overflow: hidden; /* Prevent body scrollbars */
 			}
-			#viewer {
+			/* #viewer size will be set by renderTo options */
+			/* #viewer {
 				width: 100vw;
 				height: 100vh;
-				/* Allow Epub.js to handle background */
-			}
+			} */
 			/* Placeholder for theme styles injected via JS */
 		</style>
 	</head>
@@ -56,8 +57,10 @@
 			window.epubRendition = null;
 
 			// Function to initialize Epub.js (called by Flutter)
-			function initializeEpubReader(opfPath, initialCfi) {
-				console.log("Initializing Epub.js with OPF path:", opfPath);
+			function initializeEpubReader(opfPath, initialCfi, width, height) {
+				console.log(
+					`Initializing Epub.js with OPF path: ${opfPath}, Width: ${width}, Height: ${height}`
+				);
 				console.log("Received initial CFI:", initialCfi);
 
 				// Check if ePub is available
@@ -82,12 +85,13 @@
 
 					// Create the rendition with proper configuration
 					window.epubRendition = window.epubBook.renderTo("viewer", {
-						width: "100%",
-						height: "100%",
+						width: width,
+						height: height,
 						flow: "paginated",
 						spread: "none",
 						allowScriptedContent: true,
-						manager: "default", // Use default manager for stable pagination
+						manager: "continuous",
+						transition: "none",
 					});
 					console.log(
 						"Rendition object created:",

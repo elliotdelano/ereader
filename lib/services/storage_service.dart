@@ -64,6 +64,40 @@ class StorageService {
   static const String _sortOptionKey = 'librarySortOption';
   static const String _sortDirectionKey = 'librarySortAscending';
 
+  // --- Currently Reading --- NEW SECTION
+  static const String _currentlyReadingKey = 'currentlyReadingBooks';
+
+  // Save the set of currently reading book paths
+  Future<void> saveCurrentlyReading(Set<String> paths) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Convert set to list for JSON encoding
+      final pathList = paths.toList();
+      await prefs.setStringList(_currentlyReadingKey, pathList);
+      // print("Saved currently reading paths: $pathList");
+    } catch (e) {
+      print("Error saving currently reading paths: $e");
+    }
+  }
+
+  // Load the set of currently reading book paths
+  Future<Set<String>> loadCurrentlyReading() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pathList = prefs.getStringList(_currentlyReadingKey);
+      if (pathList == null) {
+        return <String>{}; // Return empty set if not found
+      }
+      // Convert list back to set
+      final pathSet = pathList.toSet();
+      // print("Loaded currently reading paths: $pathSet");
+      return pathSet;
+    } catch (e) {
+      print("Error loading currently reading paths: $e");
+      return <String>{}; // Return empty set on error
+    }
+  }
+
   // Save sort preferences
   Future<void> saveSortSettings(SortOption option, bool ascending) async {
     try {

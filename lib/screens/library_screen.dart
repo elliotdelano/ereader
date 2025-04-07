@@ -24,6 +24,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _selectedDirectory;
   SortOption _currentSort = SortOption.title;
   bool _sortAscending = true;
+  Set<String> _currentlyReadingPaths = {};
+  List<Book> _currentlyReadingBooks = [];
+  List<Book> _otherBooks = [];
 
   @override
   void initState() {
@@ -36,22 +39,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _isLoading = true;
     });
 
-    // Load sort settings first
+    final results = await Future.wait([
+      _storageService.loadSortSettings(),
+      _storageService.loadCurrentlyReading(),
+    ]);
+
     final (loadedSortOption, loadedSortAscending) =
-        await _storageService.loadSortSettings();
+        results[0] as (SortOption, bool);
+    _currentlyReadingPaths = results[1] as Set<String>;
 
     try {
       final savedPath = await _storageService.getSelectedFolderPath();
       if (savedPath != null) {
         setState(() {
-          // Apply loaded settings before loading books
           _currentSort = loadedSortOption;
           _sortAscending = loadedSortAscending;
           _selectedDirectory = savedPath;
         });
         await _loadBooks();
       } else {
-        // No saved path, but still apply loaded/default sort settings
         setState(() {
           _currentSort = loadedSortOption;
           _sortAscending = loadedSortAscending;
@@ -60,14 +66,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } catch (e) {
       print('Error loading saved directory or settings: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
-  void _sortBooks() {
-    _books.sort((a, b) {
+  void _processAndSortBooks() {
+    _currentlyReadingBooks =
+        _books
+            .where((book) => _currentlyReadingPaths.contains(book.path))
+            .toList();
+    _otherBooks =
+        _books
+            .where((book) => !_currentlyReadingPaths.contains(book.path))
+            .toList();
+
+    _sortBookList(_currentlyReadingBooks);
+    _sortBookList(_otherBooks);
+  }
+
+  void _sortBookList(List<Book> listToSort) {
+    listToSort.sort((a, b) {
       int comparison;
       switch (_currentSort) {
         case SortOption.title:
@@ -78,7 +100,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           final bAuthor = b.author?.toLowerCase() ?? '';
           comparison = aAuthor.compareTo(bAuthor);
           if (comparison == 0) {
-            // If authors are equal, sort by title
             comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
           }
           break;
@@ -93,7 +114,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           final bSeries = b.series?.toLowerCase() ?? '';
           comparison = aSeries.compareTo(bSeries);
           if (comparison == 0) {
-            // If series are equal, sort by title
             comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
           }
           break;
@@ -116,7 +136,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         });
         await _loadBooks();
       } else {
-        // User canceled directory selection
         setState(() {
           _isLoading = false;
         });
@@ -131,51 +150,57 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _loadBooks() async {
     if (_selectedDirectory == null) {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
       return;
     }
 
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
-      // Load initial book list (without percentage)
+      _currentlyReadingPaths = await _storageService.loadCurrentlyReading();
+
       List<Book> initialBooks = await _fileService.scanForBooks(
         _selectedDirectory!,
       );
-
-      // Create a new list to hold books with percentages
       List<Book> booksWithProgress = [];
 
-      // Load progress for each book
       for (final book in initialBooks) {
         final progressData = await _storageService.loadReadingProgress(
           book.path,
         );
-        if (progressData != null && progressData['percentage'] is double) {
-          // Create a new book instance with the loaded percentage
-          booksWithProgress.add(
-            book.copyWith(
-              readingPercentage: progressData['percentage'] as double,
-            ),
-          );
-        } else {
-          // Add the book without progress if none was saved
-          booksWithProgress.add(book);
-        }
+        booksWithProgress.add(
+          book.copyWith(
+            readingPercentage: progressData?['percentage'] as double?,
+          ),
+        );
       }
 
-      setState(() {
-        _books =
-            booksWithProgress; // Update state with the list containing percentages
-        _sortBooks();
-      });
+      if (mounted) {
+        setState(() {
+          _books = booksWithProgress;
+          _processAndSortBooks();
+        });
+      }
     } catch (e) {
-      // Handle error
       print('Error loading books: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading books: ${e.toString()}')),
+        );
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -183,28 +208,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await _storageService.saveSortSettings(_currentSort, _sortAscending);
   }
 
+  void _updateCurrentlyReadingStatus(String path, bool isReading) async {
+    if (isReading) {
+      _currentlyReadingPaths.add(path);
+    } else {
+      _currentlyReadingPaths.remove(path);
+    }
+    setState(() {
+      _processAndSortBooks();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final Color currentlyReadingColor = colorScheme.surfaceContainerHighest;
+    final Color defaultItemColor = colorScheme.surface;
+
+    final List<Book> combinedList = [..._currentlyReadingBooks, ..._otherBooks];
+    final int currentlyReadingCount = _currentlyReadingBooks.length;
+
     return Scaffold(
+      backgroundColor: defaultItemColor,
       appBar: AppBar(
         title: const Text('Library'),
         actions: [
-          // Sort menu
           PopupMenuButton<SortOption>(
             icon: const Icon(Icons.sort),
             tooltip: 'Sort Books',
             onSelected: (SortOption option) {
               setState(() {
                 if (_currentSort == option) {
-                  // Direction is toggled by the dedicated button now
                   _sortAscending = !_sortAscending;
                 } else {
                   _currentSort = option;
-                  _sortAscending =
-                      true; // Default to ascending when changing sort type
+                  _sortAscending = true;
                 }
-                _sortBooks();
-                _saveSortSettings(); // Save settings when sort type changes
+                _processAndSortBooks();
+                _saveSortSettings();
               });
             },
             itemBuilder:
@@ -231,7 +272,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ],
           ),
-          // Sort Direction Toggle Button
           IconButton(
             icon: Icon(
               _sortAscending ? Icons.arrow_downward : Icons.arrow_upward,
@@ -240,8 +280,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             onPressed: () {
               setState(() {
                 _sortAscending = !_sortAscending;
-                _sortBooks();
-                _saveSortSettings(); // Save settings when direction changes
+                _processAndSortBooks();
+                _saveSortSettings();
               });
             },
           ),
@@ -254,20 +294,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
             icon: const Icon(Icons.search),
             tooltip: 'Search Library',
             onPressed: () async {
-              // Show the search page and wait for a result (a selected Book or null)
               final Book? selectedBook = await showSearch<Book?>(
                 context: context,
-                delegate: BookSearchDelegate(allBooks: _books),
+                delegate: BookSearchDelegate(allBooks: combinedList),
               );
 
-              // If the user selected a book from search, navigate to it
               if (selectedBook != null && mounted) {
-                Navigator.push(
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => ReaderScreen(book: selectedBook),
                   ),
                 );
+                await _loadBooks();
               }
             },
           ),
@@ -291,7 +330,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ],
                 ),
               )
-              : _books.isEmpty
+              : combinedList.isEmpty
               ? Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -309,106 +348,164 @@ class _LibraryScreenState extends State<LibraryScreen> {
               : RefreshIndicator(
                 onRefresh: _loadBooks,
                 child: ListView.builder(
-                  itemCount: _books.length,
+                  itemCount:
+                      _otherBooks.length + (currentlyReadingCount > 0 ? 1 : 0),
                   itemBuilder: (context, index) {
-                    final book = _books[index];
-                    return ListTile(
-                      leading:
-                          book.coverImagePath != null &&
-                                  book.coverImagePath!.isNotEmpty
-                              ? ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.file(
-                                  File(book.coverImagePath!),
-                                  width: 40,
-                                  height: 60,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return _buildDefaultIcon(book);
-                                  },
-                                ),
-                              )
-                              : _buildDefaultIcon(book),
-                      title: Text(book.title),
-                      isThreeLine:
-                          book.readingPercentage != null &&
-                          book.readingPercentage! > 0.01,
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(book.author ?? 'Unknown Author'),
-                          if (book.readingPercentage != null &&
-                              book.readingPercentage! > 0.01) ...[
-                            const SizedBox(height: 4),
-                            LinearProgressIndicator(
-                              value: book.readingPercentage!,
-                              minHeight: 6,
-                              backgroundColor:
-                                  Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainer,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.primary,
+                    if (currentlyReadingCount > 0 && index == 0) {
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        elevation: 1,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        color: currentlyReadingColor,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: 12.0,
+                                left: 16.0,
+                                bottom: 4.0,
                               ),
-                              borderRadius: BorderRadius.circular(4),
+                              child: Text(
+                                "Currently Reading",
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.titleMedium?.copyWith(
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: currentlyReadingCount,
+                              itemBuilder: (context, crIndex) {
+                                final book = _currentlyReadingBooks[crIndex];
+                                return _buildBookListItem(book, crIndex, true);
+                              },
                             ),
                           ],
-                        ],
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        itemBuilder:
-                            (context) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Edit'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                        onSelected: (value) async {
-                          if (value == 'edit') {
-                            await showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              useSafeArea: true,
-                              builder:
-                                  (context) => Padding(
-                                    padding: EdgeInsets.only(
-                                      bottom:
-                                          MediaQuery.of(
-                                            context,
-                                          ).viewInsets.bottom,
-                                    ),
-                                    child: BookEditSheet(
-                                      book: book,
-                                      onBookUpdated: (updatedBook) {
-                                        setState(() {
-                                          _books[index] = updatedBook;
-                                          _sortBooks();
-                                        });
-                                      },
-                                    ),
-                                  ),
-                            );
-                          } else if (value == 'delete') {
-                            // Handle delete
-                          }
-                        },
-                      ),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ReaderScreen(book: book),
-                          ),
-                        );
-                      },
-                    );
+                        ),
+                      );
+                    } else {
+                      final otherIndex =
+                          index - (currentlyReadingCount > 0 ? 1 : 0);
+                      if (otherIndex >= _otherBooks.length) return null;
+
+                      final book = _otherBooks[otherIndex];
+                      return Container(
+                        color: defaultItemColor,
+                        child: _buildBookListItem(book, otherIndex, false),
+                      );
+                    }
                   },
                 ),
               ),
+    );
+  }
+
+  Widget _buildBookListItem(
+    Book book,
+    int index,
+    bool partOfCurrentlyReadingList,
+  ) {
+    final bool isActuallyCurrentlyReading = _currentlyReadingPaths.contains(
+      book.path,
+    );
+
+    return ListTile(
+      leading:
+          book.coverImagePath != null && book.coverImagePath!.isNotEmpty
+              ? ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.file(
+                  File(book.coverImagePath!),
+                  width: 40,
+                  height: 60,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return _buildDefaultIcon(book);
+                  },
+                ),
+              )
+              : _buildDefaultIcon(book),
+      title: Text(book.title),
+      isThreeLine:
+          book.readingPercentage != null && book.readingPercentage! > 0.01,
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(book.author ?? 'Unknown Author'),
+          if (book.readingPercentage != null &&
+              book.readingPercentage! > 0.01) ...[
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              value: book.readingPercentage!,
+              minHeight: 6,
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                Theme.of(context).colorScheme.primary,
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+        ],
+      ),
+      trailing: PopupMenuButton<String>(
+        itemBuilder:
+            (context) => [
+              const PopupMenuItem(value: 'edit', child: Text('Edit')),
+              const PopupMenuItem(value: 'delete', child: Text('Delete')),
+            ],
+        onSelected: (value) async {
+          if (value == 'edit') {
+            await showModalBottomSheet<bool?>(
+              context: context,
+              isScrollControlled: true,
+              useSafeArea: true,
+              builder:
+                  (context) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).viewInsets.bottom,
+                    ),
+                    child: BookEditSheet(
+                      book: book,
+                      onBookUpdated: (updatedBook) {
+                        final originalIndex = _books.indexWhere(
+                          (b) => b.path == updatedBook.path,
+                        );
+                        if (originalIndex != -1) {
+                          setState(() {
+                            _books[originalIndex] = updatedBook;
+                            _processAndSortBooks();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+            );
+            await _loadBooks();
+          } else if (value == 'delete') {
+            // Handle delete
+          }
+        },
+      ),
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => ReaderScreen(book: book)),
+        );
+        await _loadBooks();
+      },
     );
   }
 
