@@ -27,6 +27,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _isAppBarVisible = false;
   final GlobalKey<CustomEpubViewerState> _epubViewerKey = GlobalKey();
 
+  // --- NEW: Slider and Progress State ---
+  double _currentBookPercentage = 0.0; // Latest actual book progress
+  double _sliderValue = 0.0; // Visual position of slider thumb
+  String? _preScrubCfi; // CFI before user starts scrubbing
+  String? _currentCfiFromViewer; // Latest CFI received from viewer
+  bool _isScrubbing = false; // Is the user currently dragging the slider?
+  // --- End NEW ---
+
   // Placeholder for current location (page number for PDF, locator for EPUB)
   final String _currentLocation = '';
 
@@ -106,12 +114,32 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final progressData = await _storageService.loadReadingProgress(
         widget.book.path,
       );
-      // Extract the CFI if the map and key exist
-      if (progressData != null && progressData['cfi'] is String) {
-        _initialCfi = progressData['cfi'] as String;
+
+      // Extract the CFI and Percentage if the map and keys exist
+      double initialPercentage = 0.0;
+      if (progressData != null) {
+        if (progressData['cfi'] is String) {
+          _initialCfi = progressData['cfi'] as String;
+          _currentCfiFromViewer = _initialCfi; // Initialize with loaded CFI
+        } else {
+          _initialCfi = null;
+          _currentCfiFromViewer = null;
+        }
+        // Also load percentage
+        if (progressData['percentage'] is double) {
+          initialPercentage = progressData['percentage'] as double;
+        } else if (progressData['percentage'] is int) {
+          // Handle cases where it might have been saved as int (though unlikely now)
+          initialPercentage = (progressData['percentage'] as int).toDouble();
+        }
       } else {
-        _initialCfi = null; // Ensure it's null if not found
+        _initialCfi = null;
+        _currentCfiFromViewer = null;
       }
+
+      // Initialize slider and book percentage state
+      _currentBookPercentage = initialPercentage;
+      _sliderValue = initialPercentage;
     }
     if (mounted) {
       setState(() {
@@ -283,6 +311,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  // NEW: Handle horizontal swipes for page turning
+  void _handleHorizontalSwipe(DragEndDetails details) {
+    if (widget.book.format != BookFormat.epub) return; // Only for EPUBs
+
+    // Velocity check to determine direction and intent
+    // Adjust the threshold (e.g., 500) as needed for sensitivity
+    if (details.primaryVelocity != null) {
+      if (details.primaryVelocity! < -500) {
+        // Swiped Left (->): Next Page
+        _epubViewerKey.currentState?.nextPage();
+      } else if (details.primaryVelocity! > 500) {
+        // Swiped Right (<-): Previous Page
+        _epubViewerKey.currentState?.previousPage();
+      }
+    }
+  }
+
+  // --- NEW: Handle Location Update from Viewer ---
+  void _handleLocationUpdate(double percentage, String? cfi) {
+    if (mounted) {
+      setState(() {
+        _currentBookPercentage = percentage;
+        _currentCfiFromViewer = cfi;
+        // Only update slider's visual value if user isn't actively dragging it
+        if (!_isScrubbing) {
+          _sliderValue = percentage;
+        }
+      });
+    }
+  }
+  // --- End NEW ---
+
   @override
   Widget build(BuildContext context) {
     // Access providers
@@ -294,94 +354,195 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final bool isDarkMode = themeProvider.currentTheme == AppTheme.dark;
     final SystemUiOverlayStyle overlayStyle = SystemUiOverlayStyle(
       statusBarColor:
-          isDarkMode
-              ? Colors.black
-              : Colors
-                  .transparent, // Black background for dark mode, transparent otherwise
+          Theme.of(context)
+              .colorScheme
+              .surface, // Black background for dark mode, transparent otherwise
       statusBarIconBrightness:
           isDarkMode
               ? Brightness.light
               : Brightness.dark, // Light icons for dark mode, dark otherwise
+      systemStatusBarContrastEnforced: false,
     );
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: overlayStyle,
-      child: Scaffold(
-        body: Stack(
-          children: [
-            // Main content with padding
-            Padding(
-              padding: EdgeInsets.only(top: topPadding),
-              child: _buildReaderView(settingsProvider),
+    SystemChrome.setSystemUIOverlayStyle(overlayStyle);
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Stack(
+        children: [
+          // Main content with padding
+          Padding(
+            padding: EdgeInsets.only(top: topPadding),
+            child: _buildReaderView(settingsProvider),
+          ),
+          // Invisible gesture detector covering only the main content area
+          // Placed *before* the AppBar in the Stack order
+          Positioned(
+            top: topPadding,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: GestureDetector(
+              onTapUp: _handleTap,
+              onHorizontalDragEnd:
+                  _handleHorizontalSwipe, // ADDED: Handle swipes
+              behavior:
+                  HitTestBehavior
+                      .translucent, // Allows taps to pass through if needed, but primarily for AppBar toggle
             ),
-            // Invisible gesture detector covering only the main content area
-            // Placed *before* the AppBar in the Stack order
-            Positioned(
-              top: topPadding,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onTapUp: _handleTap,
-                behavior:
-                    HitTestBehavior
-                        .translucent, // Allows taps to pass through if needed, but primarily for AppBar toggle
-              ),
-            ),
-            // Floating AppBar with fade animation
-            // Placed *after* the GestureDetector, so it's on top when visible
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 200),
-                opacity: _isAppBarVisible ? 1.0 : 0.0,
-                child: IgnorePointer(
-                  ignoring:
-                      !_isAppBarVisible, // Allows interaction ONLY when visible
-                  child: SafeArea(
-                    bottom: false,
-                    child: Container(
-                      margin: const EdgeInsets.only(left: 8, right: 8),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).scaffoldBackgroundColor.withAlpha(230),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withAlpha(100),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: AppBar(
-                        backgroundColor: Colors.transparent,
-                        elevation: 0,
-                        title: Text(widget.book.title),
-                        actions: [
-                          if (widget.book.format == BookFormat.epub)
+          ),
+          // Floating AppBar with fade animation
+          // Placed *after* the GestureDetector, so it's on top when visible
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: _isAppBarVisible ? 1.0 : 0.0,
+              child: IgnorePointer(
+                ignoring:
+                    !_isAppBarVisible, // Allows interaction ONLY when visible
+                child: SafeArea(
+                  bottom: false,
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 8, right: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).scaffoldBackgroundColor.withAlpha(230),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withAlpha(100),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      // NEW: Wrap AppBar and Slider
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AppBar(
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          title: Text(widget.book.title),
+                          actions: [
+                            if (widget.book.format == BookFormat.epub)
+                              IconButton(
+                                icon: const Icon(Icons.list),
+                                tooltip: 'Table of Contents',
+                                onPressed: _showTableOfContents,
+                              ),
                             IconButton(
-                              icon: const Icon(Icons.list),
-                              tooltip: 'Table of Contents',
-                              onPressed: _showTableOfContents,
+                              icon: const Icon(Icons.settings_outlined),
+                              tooltip: 'Settings',
+                              onPressed: _showSettings,
                             ),
-                          IconButton(
-                            icon: const Icon(Icons.settings_outlined),
-                            tooltip: 'Settings',
-                            onPressed: _showSettings,
+                          ],
+                        ),
+                        // --- NEW: Slider Added Here ---
+                        if (widget.book.format == BookFormat.epub)
+                          SizedBox(
+                            height: 20, // Height for the slider area
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 2.0,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 6.0,
+                                ),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 12.0,
+                                ),
+                                activeTrackColor:
+                                    Theme.of(context).colorScheme.primary,
+                                inactiveTrackColor: (isDarkMode
+                                        ? Colors.grey.shade800
+                                        : Colors.grey.shade300)
+                                    .withAlpha(150),
+                                thumbColor:
+                                    Theme.of(context).colorScheme.primary,
+                                overlayColor: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withAlpha(60),
+                              ),
+                              child: Slider(
+                                value: _sliderValue.clamp(
+                                  0.0,
+                                  1.0,
+                                ), // Use _sliderValue
+                                min: 0.0,
+                                max: 1.0,
+                                onChangeStart: (value) {
+                                  setState(() {
+                                    _isScrubbing = true;
+                                    _preScrubCfi = _currentCfiFromViewer;
+                                    print(
+                                      "Slider scrub start, saved CFI: $_preScrubCfi",
+                                    );
+                                  });
+                                },
+                                onChanged: (value) {
+                                  setState(() {
+                                    // Only update visual slider value
+                                    _sliderValue = value;
+                                  });
+                                },
+                                onChangeEnd: (value) {
+                                  print(
+                                    "Slider scrub end at: ${value.toStringAsFixed(4)}",
+                                  );
+                                  // Use GlobalKey to call viewer's method
+                                  _epubViewerKey.currentState
+                                      ?.navigateToPercentage(value);
+
+                                  // Show Undo SnackBar
+                                  if (mounted && _preScrubCfi != null) {
+                                    ScaffoldMessenger.of(
+                                      context,
+                                    ).removeCurrentSnackBar(); // Remove previous if any
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                          'Jumped to location',
+                                        ),
+                                        action: SnackBarAction(
+                                          label: 'Undo',
+                                          onPressed: () {
+                                            print(
+                                              "Undo pressed, navigating back to: $_preScrubCfi",
+                                            );
+                                            if (_preScrubCfi != null) {
+                                              _epubViewerKey.currentState
+                                                  ?.navigateToCfi(
+                                                    _preScrubCfi!,
+                                                  );
+                                            }
+                                          },
+                                        ),
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                  // Important: Reset scrubbing flag and preScrubCfi after nav
+                                  setState(() {
+                                    _isScrubbing = false;
+                                    _preScrubCfi = null;
+                                  });
+                                },
+                              ),
+                            ),
                           ),
-                        ],
-                      ),
+                        // --- End Slider ---
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -395,6 +556,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         key: _epubViewerKey,
         filePath: widget.book.path,
         initialCfi: _initialCfi,
+        onLocationChanged: _handleLocationUpdate,
       );
     } else if (widget.book.format == BookFormat.pdf && _pdfController != null) {
       return SfPdfViewer.asset(widget.book.path, controller: _pdfController);

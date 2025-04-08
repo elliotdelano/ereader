@@ -15,20 +15,33 @@ import 'package:ereader/services/storage_service.dart';
 // Add a callback type for navigation methods if needed by parent
 // typedef ChapterNavigationCallback = void Function(String href);
 
+// --- NEW: Callback Type ---
+typedef EpubLocationChangedCallback =
+    void Function(double percentage, String? cfi);
+// --- End NEW ---
+
 class CustomEpubViewer extends StatefulWidget {
   final String filePath;
   final String? initialCfi;
+  final EpubLocationChangedCallback? onLocationChanged; // NEW: Callback
+
   // Add callbacks if ReaderScreen needs to trigger navigation
   // final ChapterNavigationCallback? onNextChapter;
   // final ChapterNavigationCallback? onPreviousChapter;
 
-  const CustomEpubViewer({super.key, required this.filePath, this.initialCfi});
+  const CustomEpubViewer({
+    super.key,
+    required this.filePath,
+    this.initialCfi,
+    this.onLocationChanged, // NEW: Add to constructor
+  });
 
   @override
   State<CustomEpubViewer> createState() => CustomEpubViewerState();
 }
 
-class CustomEpubViewerState extends State<CustomEpubViewer> {
+class CustomEpubViewerState extends State<CustomEpubViewer>
+    with WidgetsBindingObserver {
   final EpubServerService epubServerService = EpubServerService();
   final StorageService _storageService = StorageService();
   bool _isLoading = true;
@@ -41,6 +54,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
   int _currentPage = 0; // Keep for UI display, might be updated by Epub.js
   int _totalPages = 1; // Keep for UI display, might be updated by Epub.js
   final String _jsChannelName = 'FlutterChannel';
+  Timer? _saveProgressTimer; // ADDED: Timer for periodic saves
 
   // Store previous settings to detect changes
   double? _previousFontSize;
@@ -51,6 +65,12 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
   void initState() {
     super.initState();
     _initializeAndLoadEpub();
+    // --- NEW: Register observer and start timer ---
+    WidgetsBinding.instance.addObserver(this);
+    _saveProgressTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _saveCurrentProgress();
+    });
+    // --- End NEW ---
   }
 
   // Use didChangeDependencies to get initial provider values and listen
@@ -116,10 +136,14 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
             setState(() {
               _currentCfi = data['cfi'];
               // Ensure percentage is treated as double
-              _bookPercentage = (data['percentage'] ?? 0.0).toDouble();
+              final newPercentage = (data['percentage'] ?? 0.0).toDouble();
+              _bookPercentage = newPercentage;
               _currentPage = data['displayedPage'] ?? 0;
               // _totalPages is set by paginationInfo
             });
+            // --- NEW: Trigger Callback ---
+            widget.onLocationChanged?.call(_bookPercentage, _currentCfi);
+            // --- End NEW ---
           }
         } else if (action == 'paginationInfo') {
           if (mounted) {
@@ -321,35 +345,40 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
   }
 
   Map<String, dynamic> _getThemeBaseStyles(AppTheme theme) {
-    // Define common rules if any (e.g., link styling independent of theme)
+    // Get the current theme data directly
+    final themeData =
+        Provider.of<ThemeProvider>(context, listen: false).themeData;
+    final colorScheme = themeData.colorScheme;
+
+    // Define common rules using theme colors where appropriate
     Map<String, dynamic> commonRules = {
-      'a': {'text-decoration': 'none'},
+      'a': {
+        'color': _colorToCss(
+          colorScheme.primary,
+        ), // Use primary color for links
+        'text-decoration': 'none',
+      },
       'a:hover': {'text-decoration': 'underline'},
       'p': {'line-height': '1.5', 'margin-bottom': '0.8em'},
+      // Add more common rules if needed
     };
 
-    switch (theme) {
-      case AppTheme.dark:
-        return {
-          'body': {'background-color': '#121212', 'color': '#E0E0E0'},
-          'a': {'color': '#BB86FC', ...commonRules['a']},
-          'p': commonRules['p'],
-          // Add other dark-specific overrides here if needed
-        };
-      case AppTheme.sepia:
-        return {
-          'body': {'background-color': '#FBF0D9', 'color': '#5B4636'},
-          'a': {'color': '#704214', ...commonRules['a']},
-          'p': commonRules['p'],
-        };
-      case AppTheme.light:
-      default:
-        return {
-          'body': {'background-color': '#FFFFFF', 'color': '#000000'},
-          'a': {'color': '#0000EE', ...commonRules['a']},
-          'p': commonRules['p'],
-        };
-    }
+    // Define theme-specific overrides based on ThemeData
+    Map<String, dynamic> bodyStyles = {
+      'background-color': _colorToCss(themeData.scaffoldBackgroundColor),
+      'color': _colorToCss(
+        colorScheme.onSurface,
+      ), // Use onSurface for main text
+    };
+
+    // Combine common rules and body styles
+    // Specific rules in commonRules will override general body styles if keys match (like 'a')
+    return {'body': bodyStyles, ...commonRules};
+  }
+
+  // Helper function to convert Flutter Color to CSS hex string
+  String _colorToCss(Color color) {
+    return '#${color.toARGB32().toRadixString(16).substring(2)}';
   }
 
   Future<void> nextPage() async {
@@ -375,21 +404,26 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     print("CustomEpubViewer disposing, stopping server...");
     epubServerService.stop();
 
-    // Save current reading progress
-    if (_currentCfi != null && _currentCfi!.isNotEmpty) {
-      print("Saving progress: CFI=$_currentCfi for path=${widget.filePath}");
-      // Use _storageService instance
-      _storageService.saveReadingProgress(
-        widget.filePath,
-        _currentCfi!,
-        _bookPercentage,
-      );
-    } else {
-      print("No valid CFI to save for ${widget.filePath}");
-    }
+    // --- NEW: Unregister observer, cancel timer, and save final progress ---
+    WidgetsBinding.instance.removeObserver(this);
+    _saveProgressTimer?.cancel();
+    _saveCurrentProgress(isClosing: true); // Ensure final save on dispose
+    // --- End NEW ---
 
     super.dispose();
   }
+
+  // --- NEW: Lifecycle Handling ---
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      print("App lifecycle state changed to $state, saving progress...");
+      _saveCurrentProgress(); // Save progress when app is paused or detached
+    }
+  }
+  // --- End Lifecycle Handling ---
 
   Widget _buildPlatformWebView() {
     if (_webViewController == null) {
@@ -467,43 +501,21 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
     final Color indicatorColor =
         isDark ? Colors.grey.shade800 : Colors.grey.shade300;
 
+    // Slider Theme
+    final sliderTheme = SliderTheme.of(context).copyWith(
+      trackHeight: 2.0,
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
+      overlayShape: const RoundSliderOverlayShape(overlayRadius: 12.0),
+      activeTrackColor: Theme.of(context).colorScheme.primary,
+      inactiveTrackColor: lineBackgroundColor,
+      thumbColor: Theme.of(context).colorScheme.primary,
+      overlayColor: Theme.of(context).colorScheme.primary.withAlpha(60),
+    );
+
     return Stack(
       children: [
         _buildPlatformWebView(),
-        Positioned(
-          bottom: 10,
-          left: 0,
-          right: 0,
-          child: SizedBox(
-            height: 10, // Height for the tappable area / visual space
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                // Background Line
-                Container(
-                  height: 2.0,
-                  color: lineBackgroundColor,
-                  margin: const EdgeInsets.only(left: 15, right: 15),
-                ),
-                // Indicator Dot
-                Positioned(
-                  left:
-                      15 +
-                      ((screenWidth - 30) * _bookPercentage) -
-                      5, // Center dot over position
-                  child: Container(
-                    width: 10.0,
-                    height: 10.0,
-                    decoration: BoxDecoration(
-                      color: indicatorColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        // --- REMOVE: Slider Navigation UI (Moved to ReaderScreen) ---\n        /*\n        Positioned(\n          bottom: 0, // Adjust position slightly if needed\n          left: 0,\n          right: 0,\n          child: Container(\n            // Add some padding/margin if the slider feels too close to the edge\n            padding: const EdgeInsets.symmetric(horizontal: 8.0),\n            // Optional: Add a subtle background if needed for contrast\n            // color: Theme.of(context).colorScheme.surface.withAlpha(200),\n            height: 30, // Increased height for easier interaction\n            child: SliderTheme(\n              data: sliderTheme,\n              child: Slider(\n                value: _bookPercentage, // Use _bookPercentage directly now\n                min: 0.0,\n                max: 1.0,\n                onChangeStart: (value) {\n                  // Store current location before scrubbing - Logic moved to ReaderScreen\n                  // _preScrubCfi = _currentCfi;\n                },\n                onChanged: (value) {\n                  // Update slider visual position immediately - Logic moved to ReaderScreen\n                  // setState(() {\n                  //   _sliderValue = value; // This state var is removed\n                  // });\n                },\n                onChangeEnd: (value) {\n                  // Navigate & Show Undo SnackBar - Logic moved to ReaderScreen\n                  // print(\"Slider scrub end at: \${value.toStringAsFixed(4)}\");\n                  // _navigateToPercentage(value);\n                  // Show Undo SnackBar logic removed...\n                },\n              ),\n            ),\n          ),\n        ),\n        */\n        // --- End REMOVE ---\n      ],\n    );\n  }
       ],
     );
   }
@@ -564,4 +576,66 @@ class CustomEpubViewerState extends State<CustomEpubViewer> {
       print("Error calling navigateToHref in JS: $e");
     }
   }
+
+  // --- NEW: Navigation Methods ---
+  /// Navigates the EPUB view to the specified percentage.
+  Future<void> navigateToPercentage(double percentage) async {
+    if (_webViewController == null || _isLoading) {
+      print("navigateToPercentage: WebView not ready or still loading.");
+      return;
+    }
+    // Ensure percentage is within valid range
+    final clampedPercentage = percentage.clamp(0.0, 1.0);
+    final jsCode = "navigateToPercentage($clampedPercentage);";
+    try {
+      await _webViewController!.runJavaScript(jsCode);
+      print("Called navigateToPercentage($clampedPercentage)");
+    } catch (e) {
+      print("Error calling navigateToPercentage in JS: $e");
+    }
+  }
+
+  /// Navigates the EPUB view to the specified CFI.
+  Future<void> navigateToCfi(String cfi) async {
+    if (_webViewController == null || _isLoading) {
+      print("navigateToCfi: WebView not ready or still loading.");
+      return;
+    }
+    // Escape CFI for JS string literal
+    final escapedCfi = cfi.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+    final jsCode = "navigateToCfi('$escapedCfi');";
+    try {
+      await _webViewController!.runJavaScript(jsCode);
+      print("Called navigateToCfi('$cfi')");
+    } catch (e) {
+      print("Error calling navigateToCfi in JS: $e");
+    }
+  }
+  // --- End Navigation Methods ---
+
+  // --- NEW: Progress Saving Logic ---
+  Future<void> _saveCurrentProgress({bool isClosing = false}) async {
+    // Only save if we have a valid CFI
+    if (_currentCfi != null && _currentCfi!.isNotEmpty) {
+      // Optional: Log differently if saving during dispose
+      final logPrefix = isClosing ? "(Dispose)" : "(Auto-save)";
+      // print(
+      //   "$logPrefix Saving progress: CFI=$_currentCfi, Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
+      // );
+      try {
+        await _storageService.saveReadingProgress(
+          widget.filePath,
+          _currentCfi!, // Assert non-null as checked above
+          _bookPercentage,
+        );
+      } catch (e) {
+        print("$logPrefix Error saving progress: $e");
+      }
+    } else {
+      // Optional: Log if there's nothing to save yet
+      // print("(Auto-save) No valid CFI available to save.");
+    }
+  }
+
+  // --- End Progress Saving Logic ---
 }

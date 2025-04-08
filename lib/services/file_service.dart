@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-// Use prefix to avoid conflicts
 import 'package:permission_handler/permission_handler.dart';
 import 'package:epubx/epubx.dart';
 import 'package:path_provider/path_provider.dart';
@@ -100,7 +98,7 @@ class FileService {
               final imageFile = File(filePath);
               await imageFile.writeAsBytes(pngBytes.buffer.asUint8List());
               coverImagePath = filePath;
-              print("Saved cover image to: $coverImagePath");
+              // print("Saved cover image to: $coverImagePath");
             }
 
             // Clean up
@@ -184,9 +182,9 @@ class FileService {
               if (fileLastModified.isAfter(existingMetadata.lastModified)) {
                 // File changed: Re-extract, update metadata, set flag
                 metadataNeedsUpdate = true;
-                print(
-                  "File modified, re-extracting metadata for: ${entity.path}",
-                );
+                // print(
+                //   "File modified, re-extracting metadata for: ${entity.path}",
+                // );
               }
             }
 

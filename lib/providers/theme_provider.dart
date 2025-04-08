@@ -17,21 +17,36 @@ class ThemeProvider with ChangeNotifier {
     switch (_currentTheme) {
       case AppTheme.light:
         return ThemeData.light(useMaterial3: true).copyWith(
-          scaffoldBackgroundColor: Colors.white,
-          // Add other light theme customizations
+          scaffoldBackgroundColor: const Color(0xFFFFFFFF),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: Brightness.light,
+            primary: const Color(0xFF0000EE),
+            onSurface: const Color(0xFF000000),
+          ),
         );
       case AppTheme.dark:
         return ThemeData.dark(useMaterial3: true).copyWith(
-          scaffoldBackgroundColor: Colors.grey[900],
-          // Add other dark theme customizations
+          scaffoldBackgroundColor: const Color(0xFF121212),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF121212),
+            brightness: Brightness.dark,
+            primary: const Color(0xFFBB86FC),
+            onSurface: const Color(0xFFE0E0E0),
+          ),
         );
       case AppTheme.sepia:
-        // Define Sepia colors
         const sepiaBackgroundColor = Color(0xFFFBF0D9);
+        const sepiaTextColor = Color(0xFF5B4636);
+        const sepiaLinkColor = Color(0xFF704214);
         return ThemeData(
+          useMaterial3: true,
+          scaffoldBackgroundColor: sepiaBackgroundColor,
           colorScheme: ColorScheme.fromSeed(
             seedColor: sepiaBackgroundColor,
             brightness: Brightness.light,
+            primary: sepiaLinkColor,
+            onSurface: sepiaTextColor,
           ),
         );
     }

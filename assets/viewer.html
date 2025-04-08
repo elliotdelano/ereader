@@ -55,6 +55,8 @@
 			// Global variables for Flutter to access
 			window.epubBook = null;
 			window.epubRendition = null;
+			window.epub_toc = null; // Initialize toc variable
+			window.locationsReady = false; // NEW: Flag for location generation status
 
 			// Function to initialize Epub.js (called by Flutter)
 			function initializeEpubReader(opfPath, initialCfi, width, height) {
@@ -118,17 +120,11 @@
 								"Locations generated:",
 								window.epubBook.locations.total
 							);
-							// Send initial location and total pages back to Flutter ONLY AFTER generation
-							// console.log(
-							// 	"Sending initial location and pagination info post-generation."
-							// );
-							// Explicitly get current location after generation and pass it
+							// --- NEW: Set flag before sending initial updates ---
+							window.locationsReady = true;
+							// --- End NEW ---
 							const currentLoc =
 								window.epubRendition.currentLocation();
-							// console.log(
-							// 	"Initial currentLocation object from rendition:",
-							// 	JSON.stringify(currentLoc)
-							// );
 							sendLocationUpdate(currentLoc);
 							sendPaginationInfo();
 						})
@@ -289,6 +285,14 @@
 
 			// Function to send location updates to Flutter
 			function sendLocationUpdate(location) {
+				// --- NEW: Check if locations are ready ---
+				if (!window.locationsReady) {
+					// console.log(
+					// 	"sendLocationUpdate: Locations not ready, skipping."
+					// );
+					return;
+				}
+				// --- End NEW ---
 				if (!window.FlutterChannel || !window.epubBook) return; // Keep essential guard
 
 				// Now we know location, location.start, location.start.cfi, and location.start.displayed exist.
@@ -329,6 +333,14 @@
 
 			// Function to send pagination info to Flutter
 			function sendPaginationInfo() {
+				// --- NEW: Check if locations are ready ---
+				if (!window.locationsReady) {
+					// console.log(
+					// 	"sendPaginationInfo: Locations not ready, skipping."
+					// );
+					return;
+				}
+				// --- End NEW ---
 				if (!window.FlutterChannel || !window.epubBook) return;
 
 				const totalPages = window.epubBook.locations.total;
@@ -391,6 +403,68 @@
 					console.error("Error navigating to href:", href, err);
 				}
 			}
+
+			// --- NEW: Slider Navigation Functions ---
+
+			// Function to navigate to a specific percentage (called by Flutter)
+			function navigateToPercentage(percentage) {
+				if (!window.epubBook || !window.epubRendition) {
+					console.error(
+						"navigateToPercentage: Book or Rendition not available."
+					);
+					return;
+				}
+				// Ensure locations are loaded before attempting to use them
+				if (
+					!window.epubBook.locations ||
+					window.epubBook.locations.total === 0
+				) {
+					console.warn(
+						"navigateToPercentage: Locations not generated yet. Cannot navigate by percentage."
+					);
+					// Optionally, try generating them now if appropriate, or just return
+					// window.epubBook.locations.generate(2048).then(() => { /* retry? */ });
+					return;
+				}
+				console.log("Navigating to percentage:", percentage);
+				try {
+					const cfi =
+						window.epubBook.locations.cfiFromPercentage(percentage);
+					if (cfi) {
+						window.epubRendition.display(cfi);
+						console.log(
+							"Called display with CFI from percentage:",
+							cfi
+						);
+					} else {
+						console.warn(
+							"navigateToPercentage: Could not get CFI for percentage",
+							percentage
+						);
+					}
+				} catch (err) {
+					console.error(
+						"Error navigating to percentage:",
+						percentage,
+						err
+					);
+				}
+			}
+
+			// Function to navigate to a specific CFI (called by Flutter for Undo)
+			function navigateToCfi(cfi) {
+				if (!window.epubRendition) {
+					console.error("navigateToCfi: Rendition not available.");
+					return;
+				}
+				console.log("Navigating to CFI:", cfi);
+				try {
+					window.epubRendition.display(cfi);
+				} catch (err) {
+					console.error("Error navigating to CFI:", cfi, err);
+				}
+			}
+			// --- End NEW: Slider Navigation Functions ---
 		</script>
 	</body>
 </html>
