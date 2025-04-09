@@ -71,12 +71,22 @@
 						"ePub is not defined. Check if epub.min.js loaded correctly."
 					);
 					if (window.FlutterChannel) {
-						window.FlutterChannel.postMessage(
-							JSON.stringify({
-								action: "error",
-								message: "ePub library not loaded",
-							})
-						);
+						const errorMessage = JSON.stringify({
+							action: "error",
+							message: "ePub library not loaded",
+						});
+						if (
+							typeof window.FlutterChannel.postMessage ===
+							"function"
+						) {
+							window.FlutterChannel.postMessage(errorMessage);
+						} else if (
+							typeof window.FlutterChannel === "function"
+						) {
+							window.FlutterChannel(errorMessage);
+						} else {
+							console.error("FlutterChannel is not usable.");
+						}
 					}
 					return;
 				}
@@ -127,19 +137,42 @@
 								window.epubRendition.currentLocation();
 							sendLocationUpdate(currentLoc);
 							sendPaginationInfo();
+
+							// --- ADDED: Log FlutterChannel availability after init ---
+							console.log(
+								"JS Init: Checking for FlutterChannel immediately after display() promise chain setup:",
+								window.FlutterChannel
+									? "Exists"
+									: "Does NOT Exist"
+							);
+							// --- END ADDED ---
 						})
 						.catch((err) => {
 							console.error("ERROR generating locations:", err);
 							// Optionally report this specific error back to Flutter
 							if (window.FlutterChannel) {
-								window.FlutterChannel.postMessage(
-									JSON.stringify({
-										action: "error",
-										message:
-											"Failed to generate EPUB locations: " +
-											err,
-									})
-								);
+								const errorMessage = JSON.stringify({
+									action: "error",
+									message:
+										"Failed to generate EPUB locations: " +
+										err,
+								});
+								if (
+									typeof window.FlutterChannel.postMessage ===
+									"function"
+								) {
+									window.FlutterChannel.postMessage(
+										errorMessage
+									);
+								} else if (
+									typeof window.FlutterChannel === "function"
+								) {
+									window.FlutterChannel(errorMessage);
+								} else {
+									console.error(
+										"FlutterChannel is not usable."
+									);
+								}
 							}
 						});
 
@@ -163,6 +196,20 @@
 					});
 
 					window.epubRendition.on("relocated", (location) => {
+						// --- ADDED: Log event firing and location data ---
+						console.log("JS Event: relocated fired.");
+						try {
+							console.log(
+								"JS Event: relocated - location object:",
+								JSON.stringify(location)
+							);
+						} catch (e) {
+							console.log(
+								"JS Event: relocated - location object (error stringifying):",
+								location
+							);
+						}
+						// --- END ADDED ---
 						// console.log("Event: relocated - CFI:", location?.start?.cfi); // Cleaned up
 						// Relocated often fires after locationChanged and pagination calculations
 						// This might be a better place to update Flutter state
@@ -232,12 +279,22 @@
 				} catch (err) {
 					console.error("Error initializing Epub.js:", err);
 					if (window.FlutterChannel) {
-						window.FlutterChannel.postMessage(
-							JSON.stringify({
-								action: "error",
-								message: "Epub.js initialization error: " + err,
-							})
-						);
+						const errorMessage = JSON.stringify({
+							action: "error",
+							message: "Epub.js initialization error: " + err,
+						});
+						if (
+							typeof window.FlutterChannel.postMessage ===
+							"function"
+						) {
+							window.FlutterChannel.postMessage(errorMessage);
+						} else if (
+							typeof window.FlutterChannel === "function"
+						) {
+							window.FlutterChannel(errorMessage);
+						} else {
+							console.error("FlutterChannel is not usable.");
+						}
 					}
 				}
 			}
@@ -287,9 +344,9 @@
 			function sendLocationUpdate(location) {
 				// --- NEW: Check if locations are ready ---
 				if (!window.locationsReady) {
-					// console.log(
-					// 	"sendLocationUpdate: Locations not ready, skipping."
-					// );
+					console.log(
+						"JS sendLocationUpdate: Locations not ready, skipping."
+					);
 					return;
 				}
 				// --- End NEW ---
@@ -307,6 +364,12 @@
 					percentage = window.epubBook.locations.percentageFromCfi(
 						currentLocation.start.cfi
 					);
+				} else {
+					// --- ADDED --- Log if calculation skipped
+					console.log(
+						"JS sendLocationUpdate: Book locations not ready or zero total, sending percentage 0."
+					);
+					// --- END ADDED ---
 				}
 
 				// Ensure displayed page/total are numbers, default to 0/1 if undefined
@@ -323,21 +386,46 @@
 					totalPagesInChapter: totalPagesInChapter,
 				};
 
-				// console.log(
-				// 	`sendLocationUpdate: CFI=${
-				// 		message.cfi
-				// 	}, Percentage=${message.percentage.toFixed(4)}`
-				// ); // Log sent data
-				window.FlutterChannel.postMessage(JSON.stringify(message));
+				// --- ADDED --- Log before sending
+				console.log(
+					"JS sendLocationUpdate: About to send message. FlutterChannel exists:",
+					window.FlutterChannel ? "Yes" : "No"
+				);
+				try {
+					const messageString = JSON.stringify(message);
+					console.log(
+						"JS sendLocationUpdate: Sending message:",
+						messageString
+					);
+					// --- MODIFIED: Check channel type ---
+					if (
+						typeof window.FlutterChannel.postMessage === "function"
+					) {
+						window.FlutterChannel.postMessage(messageString);
+					} else if (typeof window.FlutterChannel === "function") {
+						window.FlutterChannel(messageString);
+					} else {
+						console.error(
+							"JS sendLocationUpdate: FlutterChannel is not usable."
+						);
+					}
+					// --- END MODIFIED ---
+				} catch (e) {
+					console.error(
+						"JS sendLocationUpdate: Error stringifying or posting message:",
+						e
+					);
+				}
+				// --- END ADDED ---
 			}
 
 			// Function to send pagination info to Flutter
 			function sendPaginationInfo() {
 				// --- NEW: Check if locations are ready ---
 				if (!window.locationsReady) {
-					// console.log(
-					// 	"sendPaginationInfo: Locations not ready, skipping."
-					// );
+					console.log(
+						"JS sendPaginationInfo: Locations not ready, skipping."
+					);
 					return;
 				}
 				// --- End NEW ---
@@ -349,7 +437,37 @@
 					totalPagesInBook: totalPages,
 				};
 
-				window.FlutterChannel.postMessage(JSON.stringify(message));
+				// --- ADDED --- Log before sending
+				console.log(
+					"JS sendPaginationInfo: About to send message. FlutterChannel exists:",
+					window.FlutterChannel ? "Yes" : "No"
+				);
+				try {
+					const messageString = JSON.stringify(message);
+					console.log(
+						"JS sendPaginationInfo: Sending message:",
+						messageString
+					);
+					// --- MODIFIED: Check channel type ---
+					if (
+						typeof window.FlutterChannel.postMessage === "function"
+					) {
+						window.FlutterChannel.postMessage(messageString);
+					} else if (typeof window.FlutterChannel === "function") {
+						window.FlutterChannel(messageString);
+					} else {
+						console.error(
+							"JS sendPaginationInfo: FlutterChannel is not usable."
+						);
+					}
+					// --- END MODIFIED ---
+				} catch (e) {
+					console.error(
+						"JS sendPaginationInfo: Error stringifying or posting message:",
+						e
+					);
+				}
+				// --- END ADDED ---
 			}
 
 			// --- ToC / Navigation Functions ---

@@ -6,11 +6,19 @@ import 'package:provider/provider.dart';
 import 'package:ereader/providers/reader_settings_provider.dart';
 import 'package:ereader/providers/theme_provider.dart';
 import 'package:ereader/services/epub_server_service.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+// import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:ereader/services/storage_service.dart';
+// import 'package:webview_cef/webview_cef.dart'; // Keep commented if adapters handle imports
+// import 'package:webview_flutter/webview_flutter.dart'; // Keep commented
+
+// --- NEW: Abstraction Imports ---
+import './platform_webview_interface.dart';
+import './mobile_webview_adapter.dart';
+import './desktop_webview_adapter.dart';
+// --- End NEW ---
 
 // Add a callback type for navigation methods if needed by parent
 // typedef ChapterNavigationCallback = void Function(String href);
@@ -46,7 +54,12 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   final StorageService _storageService = StorageService();
   bool _isLoading = true;
   String? _error;
-  WebViewController? _webViewController;
+
+  // --- UPDATED: Use Interface for Controller ---
+  PlatformWebViewInterface? _platformWebViewController;
+  bool get _isDesktop => Platform.isWindows || Platform.isLinux;
+  // --- End UPDATED ---
+
   String? _baseUrl;
   String? _opfRelativePath; // Store the relative path to the OPF file
   String? _currentCfi; // Store the current CFI location
@@ -102,7 +115,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       }
 
       // Create and configure the WebView controller
-      _createAndLoadWebViewController();
+      await _createAndLoadPlatformWebView();
 
       if (mounted) {
         setState(() {
@@ -120,86 +133,176 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     }
   }
 
-  void _createAndLoadWebViewController() {
+  Future<void> _createAndLoadPlatformWebView() async {
     if (_baseUrl == null) return;
     final initialUrlToLoad = '$_baseUrl/viewer.html';
 
-    void _handleJsMessage(String messageJsonString) {
-      // print("Message from WebView: $messageJsonString"); // Keep commented unless debugging all messages
-      try {
-        final data = jsonDecode(messageJsonString);
-        final String action = data['action'] ?? 'unknown';
-        // print("Received action from JS: $action"); // Log action type
-
-        if (action == 'locationUpdate') {
-          if (mounted) {
-            setState(() {
-              _currentCfi = data['cfi'];
-              // Ensure percentage is treated as double
-              final newPercentage = (data['percentage'] ?? 0.0).toDouble();
-              _bookPercentage = newPercentage;
-              _currentPage = data['displayedPage'] ?? 0;
-              // _totalPages is set by paginationInfo
-            });
-            // --- NEW: Trigger Callback ---
-            widget.onLocationChanged?.call(_bookPercentage, _currentCfi);
-            // --- End NEW ---
-          }
-        } else if (action == 'paginationInfo') {
-          if (mounted) {
-            setState(() {
-              // Ensure total pages is treated as int
-              _totalPages = (data['totalPagesInBook'] ?? 1).toInt();
-            });
-          }
-        } else if (action == 'error') {
-          print("Error from Epub.js: ${data['message']}");
-        }
-      } catch (e) {
-        print("Error decoding JS message: $e");
-      }
+    // 1. Instantiate the correct adapter
+    if (_isDesktop) {
+      print("Creating DesktopWebViewAdapter...");
+      _platformWebViewController = DesktopWebViewAdapter();
+    } else {
+      print("Creating MobileWebViewAdapter...");
+      _platformWebViewController = MobileWebViewAdapter();
     }
 
-    final controller = WebViewController();
-    _webViewController = controller;
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
+    // 2. Set up callbacks on the adapter
+    _platformWebViewController?.onPageFinished = (String url) {
+      print('Platform Page finished loading: $url');
+      if (url.endsWith('viewer.html')) {
+        _initializeEpubJs(); // Initialize JS after the viewer page loads
+      }
+    };
+
+    _platformWebViewController?.onLoadEnd = (String url) {
+      print('Platform LoadEnd: $url');
+      // Potentially redundant if onPageFinished covers it, but good for specific platform logic
+      if (url.endsWith('viewer.html') &&
+          !_platformWebViewController!.isInitialized) {
+        // Some platforms might signal readiness here instead of onPageFinished
+        print("LoadEnd triggered, attempting JS init...");
+        _initializeEpubJs();
+      }
+    };
+
+    _platformWebViewController?.onWebResourceError = (Object error) {
+      // Handle common error format if possible, otherwise just log
+      print("Platform Web resource error: $error");
+      // Maybe set an error state for the UI
+      if (mounted) {
+        setState(() => _error = "WebView Resource Error: $error");
+      }
+    };
+
+    _platformWebViewController?.onLoadError = (url, errorCode, errorMsg) {
+      print("Platform Load error: URL=$url, Code=$errorCode, Msg=$errorMsg");
+      if (mounted) {
+        setState(() => _error = "WebView Load Error ($errorCode): $errorMsg");
+      }
+    };
+
+    _platformWebViewController?.onWebViewCreated = () {
+      print("Platform WebView Created Callback Fired.");
+      // For CEF, this might be a good place to initially load the URL
+      // but we'll stick to calling loadUrl after initialize for consistency.
+    };
+
+    try {
+      // 3. Initialize the adapter
+      print("Initializing platform WebView adapter...");
+      await _platformWebViewController?.initialize();
+      print("Platform WebView adapter initialized.");
+
+      // 4. Set background color (might be no-op on desktop)
+      await _platformWebViewController?.setBackgroundColor(Colors.transparent);
+
+      // 5. Add JS Channel
+      print(
+        "[CustomEpubViewer] Attempting to add JavaScript channel '$_jsChannelName'...",
+      );
+      await _platformWebViewController?.addJavaScriptChannel(
         _jsChannelName,
         onMessageReceived: (message) {
-          _handleJsMessage(message.message);
+          _handleJsMessage(message);
         },
-      )
-      ..setBackgroundColor(Colors.transparent)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (String url) {
-            print('Page finished loading: $url');
-            if (url.endsWith('viewer.html')) {
-              _initializeEpubJs();
-            }
-          },
-          onWebResourceError: (WebResourceError error) {
-            print(
-              "Web resource error: ${error.description}, URL: ${error.url}",
-            );
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            if (request.url.startsWith(_baseUrl!)) {
-              return NavigationDecision.navigate;
-            }
-            print("Blocked navigation to: ${request.url}");
-            return NavigationDecision.prevent;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(initialUrlToLoad));
+      );
+      print("JavaScript channel added.");
+
+      // 6. Load the initial URL
+      print("Loading initial URL: $initialUrlToLoad");
+      await _platformWebViewController?.loadUrl(initialUrlToLoad);
+      print("Initial URL load request sent.");
+    } catch (e) {
+      print("Error during platform WebView setup: $e");
+      if (mounted) {
+        setState(() {
+          _error = "Error setting up WebView: $e";
+        });
+      }
+    }
+  }
+
+  void _handleJsMessage(String messageJsonString) {
+    // --- ADDED LOGGING ---
+    print(
+      "[JS -> Dart] Received object type: ${messageJsonString.runtimeType}",
+    );
+    // --- END ADDED LOGGING ---
+    print("[JS -> Dart] Raw message: $messageJsonString");
+    // --- END ADDED LOGGING ---
+    try {
+      // --- MODIFIED: Handle potential double-escaping from CEF ---
+      dynamic jsonData;
+      if (messageJsonString.startsWith('"') &&
+          messageJsonString.endsWith('"')) {
+        // Likely double-escaped (CEF)
+        print("[JS -> Dart] Detected double-escaped string, decoding twice...");
+        try {
+          String singleEscapedJson = jsonDecode(messageJsonString);
+          jsonData = jsonDecode(singleEscapedJson);
+        } catch (e) {
+          print(
+            "Error during double decode: $e. Raw string: $messageJsonString",
+          );
+          return; // Exit if double decode fails
+        }
+      } else {
+        // Likely single-escaped (Mobile or standard)
+        print("[JS -> Dart] Assuming standard JSON string, decoding once...");
+        jsonData = jsonDecode(messageJsonString);
+      }
+
+      // Ensure jsonData is a Map before proceeding
+      if (jsonData is! Map<String, dynamic>) {
+        print(
+          "Error: Decoded JSON is not a Map. Type: ${jsonData.runtimeType}",
+        );
+        return;
+      }
+      final Map<String, dynamic> data = jsonData;
+      // --- END MODIFIED ---
+
+      final String action = data['action'] ?? 'unknown';
+      // print("Received action from JS: $action"); // Log action type
+
+      if (action == 'locationUpdate') {
+        final receivedCfi = data['cfi'];
+        print("[JS -> Dart] Received locationUpdate: CFI = $receivedCfi");
+        if (mounted) {
+          setState(() {
+            _currentCfi = receivedCfi;
+            // Ensure percentage is treated as double
+            final newPercentage = (data['percentage'] ?? 0.0).toDouble();
+            _bookPercentage = newPercentage;
+            _currentPage = data['displayedPage'] ?? 0;
+            // _totalPages is set by paginationInfo
+          });
+          // --- NEW: Trigger Callback ---
+          widget.onLocationChanged?.call(_bookPercentage, _currentCfi);
+          // --- End NEW ---
+        }
+      } else if (action == 'paginationInfo') {
+        if (mounted) {
+          setState(() {
+            // Ensure total pages is treated as int
+            _totalPages = (data['totalPagesInBook'] ?? 1).toInt();
+          });
+        }
+      } else if (action == 'error') {
+        print("Error from Epub.js: ${data['message']}");
+      }
+    } catch (e) {
+      print("Error decoding JS message: $e");
+    }
   }
 
   Future<void> _initializeEpubJs() async {
-    if (_webViewController == null || _opfRelativePath == null) {
+    // Use the interface, check for null
+    if (_platformWebViewController == null ||
+        !_platformWebViewController!.isInitialized ||
+        _opfRelativePath == null) {
       print(
-        'Cannot initialize Epub.js: WebView controller or OPF path is null.',
+        'Cannot initialize Epub.js: WebView controller not ready or OPF path is null.',
       );
       return;
     }
@@ -240,7 +343,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
        initializeEpubReader('$escapedOpfPath', $jsInitialCfiArg, $roundedLogicalWidth, $screenHeightLogical);
     ''';
     try {
-      await _webViewController!.runJavaScript(jsCode);
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(jsCode);
       print('Epub.js initialization called with OPF path: $_opfRelativePath');
       // Apply initial settings right after JS initialization completes
       await _applyThemeAndFontFamilyToWebView();
@@ -253,9 +357,12 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   void _updateSettingsIfNeeded() {
-    // This function now just contains the logic, called from build()
-    if (!mounted || _webViewController == null || _isLoading)
-      return; // ADD _isLoading CHECK
+    // Use the interface, check for null and initialized status
+    if (!mounted ||
+        _platformWebViewController == null ||
+        !_platformWebViewController!.isInitialized ||
+        _isLoading)
+      return;
 
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
@@ -291,7 +398,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   Future<void> _applyThemeAndFontFamilyToWebView() async {
-    if (_webViewController == null) return;
+    // Use the interface, check for null
+    if (_platformWebViewController == null) return;
 
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
@@ -315,7 +423,10 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // 3. Encode and call the applyStyles JavaScript function (which uses register+select)
     final stylesJson = jsonEncode(styles);
     try {
-      await _webViewController!.runJavaScript('applyStyles($stylesJson);');
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(
+        'applyStyles($stylesJson);',
+      );
       print(
         "Applied base styles: Theme=${currentTheme.name}, Family=$currentFontFamily",
       );
@@ -325,7 +436,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   Future<void> _applyFontSizeToWebView() async {
-    if (_webViewController == null) return;
+    // Use the interface, check for null
+    if (_platformWebViewController == null) return;
 
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
@@ -334,8 +446,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     final currentFontSize = settingsProvider.fontSize;
 
     try {
-      // Call the dedicated JS function for font size
-      await _webViewController!.runJavaScript(
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(
         'changeFontSize($currentFontSize);',
       );
       print("Applied font size: $currentFontSize");
@@ -382,18 +494,22 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   Future<void> nextPage() async {
-    if (_webViewController == null) return;
+    // Use the interface, check for null
+    if (_platformWebViewController == null) return;
     try {
-      await _webViewController!.runJavaScript('window.nextPage();');
+      // Use interface method
+      await _platformWebViewController!.runJavaScript('window.nextPage();');
     } catch (e) {
       print("Error navigating to next page: $e");
     }
   }
 
   Future<void> previousPage() async {
-    if (_webViewController == null) return;
+    // Use the interface, check for null
+    if (_platformWebViewController == null) return;
     try {
-      await _webViewController!.runJavaScript('window.previousPage();');
+      // Use interface method
+      await _platformWebViewController!.runJavaScript('window.previousPage();');
     } catch (e) {
       print("Error navigating to previous page: $e");
     }
@@ -409,6 +525,14 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     _saveProgressTimer?.cancel();
     _saveCurrentProgress(isClosing: true); // Ensure final save on dispose
     // --- End NEW ---
+
+    // --- UPDATED: Dispose via interface ---
+    print("Disposing platform WebView controller...");
+    _platformWebViewController?.dispose();
+    _platformWebViewController = null;
+    // --- End UPDATED ---
+
+    print("CustomEpubViewer disposed.");
 
     super.dispose();
   }
@@ -426,13 +550,12 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   // --- End Lifecycle Handling ---
 
   Widget _buildPlatformWebView() {
-    if (_webViewController == null) {
-      return const Center(child: Text("WebView Controller not initialized."));
+    if (_platformWebViewController == null) {
+      // This might happen briefly before initialization or if creation failed
+      return const Center(child: Text("WebView Controller not available."));
     }
-
-    Widget webViewWidget = WebViewWidget(controller: _webViewController!);
-
-    return webViewWidget;
+    // Use the buildView method from the interface
+    return _platformWebViewController!.buildView();
   }
 
   @override
@@ -446,7 +569,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // and webviewcontroller is likely available if not loading.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Check mount status again inside the callback
-      if (mounted && _webViewController != null && !_isLoading) {
+      if (mounted && _platformWebViewController != null && !_isLoading) {
         _updateSettingsIfNeeded();
       }
     });
@@ -512,25 +635,23 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       overlayColor: Theme.of(context).colorScheme.primary.withAlpha(60),
     );
 
-    return Stack(
-      children: [
-        _buildPlatformWebView(),
-        // --- REMOVE: Slider Navigation UI (Moved to ReaderScreen) ---\n        /*\n        Positioned(\n          bottom: 0, // Adjust position slightly if needed\n          left: 0,\n          right: 0,\n          child: Container(\n            // Add some padding/margin if the slider feels too close to the edge\n            padding: const EdgeInsets.symmetric(horizontal: 8.0),\n            // Optional: Add a subtle background if needed for contrast\n            // color: Theme.of(context).colorScheme.surface.withAlpha(200),\n            height: 30, // Increased height for easier interaction\n            child: SliderTheme(\n              data: sliderTheme,\n              child: Slider(\n                value: _bookPercentage, // Use _bookPercentage directly now\n                min: 0.0,\n                max: 1.0,\n                onChangeStart: (value) {\n                  // Store current location before scrubbing - Logic moved to ReaderScreen\n                  // _preScrubCfi = _currentCfi;\n                },\n                onChanged: (value) {\n                  // Update slider visual position immediately - Logic moved to ReaderScreen\n                  // setState(() {\n                  //   _sliderValue = value; // This state var is removed\n                  // });\n                },\n                onChangeEnd: (value) {\n                  // Navigate & Show Undo SnackBar - Logic moved to ReaderScreen\n                  // print(\"Slider scrub end at: \${value.toStringAsFixed(4)}\");\n                  // _navigateToPercentage(value);\n                  // Show Undo SnackBar logic removed...\n                },\n              ),\n            ),\n          ),\n        ),\n        */\n        // --- End REMOVE ---\n      ],\n    );\n  }
-      ],
-    );
+    return Stack(children: [_buildPlatformWebView()]);
   }
 
   /// Fetches the Table of Contents as a JSON string from the underlying EPUB.
   /// Returns null if the ToC cannot be fetched.
   Future<String?> getTocJson() async {
-    if (_webViewController == null || _isLoading) {
+    // Use the interface, check for null and initialized status
+    if (_platformWebViewController == null ||
+        !_platformWebViewController!.isInitialized ||
+        _isLoading) {
       print("getTocJson: WebView not ready or still loading.");
       return null;
     }
     try {
-      final result = await _webViewController!.runJavaScriptReturningResult(
-        'getToc();',
-      );
+      // Use interface method
+      final result = await _platformWebViewController!
+          .runJavaScriptReturningResult('getToc();');
       // result might be wrapped in quotes, check and handle
       if (result is String && result.isNotEmpty) {
         // Basic check if it looks like JSON (starts/ends with [] or {})
@@ -562,7 +683,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
   /// Navigates the EPUB view to the specified href.
   Future<void> navigateToHref(String href) async {
-    if (_webViewController == null || _isLoading) {
+    // Use the interface, check for null
+    if (_platformWebViewController == null) {
       print("navigateToHref: WebView not ready or still loading.");
       return;
     }
@@ -570,7 +692,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     final escapedHref = href.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
     final jsCode = "navigateToHref('$escapedHref');";
     try {
-      await _webViewController!.runJavaScript(jsCode);
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(jsCode);
       print("Called navigateToHref('$href')");
     } catch (e) {
       print("Error calling navigateToHref in JS: $e");
@@ -580,7 +703,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   // --- NEW: Navigation Methods ---
   /// Navigates the EPUB view to the specified percentage.
   Future<void> navigateToPercentage(double percentage) async {
-    if (_webViewController == null || _isLoading) {
+    // Use the interface, check for null
+    if (_platformWebViewController == null) {
       print("navigateToPercentage: WebView not ready or still loading.");
       return;
     }
@@ -588,7 +712,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     final clampedPercentage = percentage.clamp(0.0, 1.0);
     final jsCode = "navigateToPercentage($clampedPercentage);";
     try {
-      await _webViewController!.runJavaScript(jsCode);
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(jsCode);
       print("Called navigateToPercentage($clampedPercentage)");
     } catch (e) {
       print("Error calling navigateToPercentage in JS: $e");
@@ -597,7 +722,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
   /// Navigates the EPUB view to the specified CFI.
   Future<void> navigateToCfi(String cfi) async {
-    if (_webViewController == null || _isLoading) {
+    // Use the interface, check for null
+    if (_platformWebViewController == null) {
       print("navigateToCfi: WebView not ready or still loading.");
       return;
     }
@@ -605,7 +731,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     final escapedCfi = cfi.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
     final jsCode = "navigateToCfi('$escapedCfi');";
     try {
-      await _webViewController!.runJavaScript(jsCode);
+      // Use interface method
+      await _platformWebViewController!.runJavaScript(jsCode);
       print("Called navigateToCfi('$cfi')");
     } catch (e) {
       print("Error calling navigateToCfi in JS: $e");
@@ -615,13 +742,11 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
   // --- NEW: Progress Saving Logic ---
   Future<void> _saveCurrentProgress({bool isClosing = false}) async {
-    // Only save if we have a valid CFI
+    final logPrefix = isClosing ? "(Dispose)" : "(Auto-save)";
     if (_currentCfi != null && _currentCfi!.isNotEmpty) {
-      // Optional: Log differently if saving during dispose
-      final logPrefix = isClosing ? "(Dispose)" : "(Auto-save)";
-      // print(
-      //   "$logPrefix Saving progress: CFI=$_currentCfi, Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
-      // );
+      print(
+        "$logPrefix Saving progress: Attempting with CFI='$_currentCfi', Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
+      );
       try {
         await _storageService.saveReadingProgress(
           widget.filePath,
@@ -632,8 +757,9 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         print("$logPrefix Error saving progress: $e");
       }
     } else {
-      // Optional: Log if there's nothing to save yet
-      // print("(Auto-save) No valid CFI available to save.");
+      print(
+        "$logPrefix Skipping save: No valid CFI available (_currentCfi = '$_currentCfi').",
+      );
     }
   }
 

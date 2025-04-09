@@ -9,7 +9,7 @@
 #include <permission_handler_windows/permission_handler_windows_plugin.h>
 #include <syncfusion_pdfviewer_windows/syncfusion_pdfviewer_windows_plugin.h>
 #include <url_launcher_windows/url_launcher_windows.h>
-#include <webview_windows/webview_windows_plugin.h>
+#include <webview_cef/webview_cef_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   PermissionHandlerWindowsPluginRegisterWithRegistrar(
@@ -18,6 +18,6 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("SyncfusionPdfviewerWindowsPlugin"));
   UrlLauncherWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("UrlLauncherWindows"));
-  WebviewWindowsPluginRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("WebviewWindowsPlugin"));
+  WebviewCefPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("WebviewCefPluginCApi"));
 }
