@@ -59,10 +59,18 @@
 			window.locationsReady = false; // NEW: Flag for location generation status
 
 			// Function to initialize Epub.js (called by Flutter)
-			function initializeEpubReader(opfPath, initialCfi, width, height) {
+			function initializeEpubReader(
+				opfPath,
+				initialCfi,
+				width,
+				height,
+				flow = "paginated",
+				spread = "none"
+			) {
 				console.log(
 					`Initializing Epub.js with OPF path: ${opfPath}, Width: ${width}, Height: ${height}`
 				);
+				console.log(`Flow: ${flow}, Spread: ${spread}`);
 				console.log("Received initial CFI:", initialCfi);
 
 				// Check if ePub is available
@@ -99,8 +107,8 @@
 					window.epubRendition = window.epubBook.renderTo("viewer", {
 						width: width,
 						height: height,
-						flow: "paginated",
-						spread: "none",
+						flow: flow,
+						spread: spread,
 						allowScriptedContent: true,
 						manager: "continuous",
 						transition: "none",
@@ -197,18 +205,18 @@
 
 					window.epubRendition.on("relocated", (location) => {
 						// --- ADDED: Log event firing and location data ---
-						console.log("JS Event: relocated fired.");
-						try {
-							console.log(
-								"JS Event: relocated - location object:",
-								JSON.stringify(location)
-							);
-						} catch (e) {
-							console.log(
-								"JS Event: relocated - location object (error stringifying):",
-								location
-							);
-						}
+						// console.log("JS Event: relocated fired.");
+						// try {
+						// 	console.log(
+						// 		"JS Event: relocated - location object:",
+						// 		JSON.stringify(location)
+						// 	);
+						// } catch (e) {
+						// 	console.log(
+						// 		"JS Event: relocated - location object (error stringifying):",
+						// 		location
+						// 	);
+						// }
 						// --- END ADDED ---
 						// console.log("Event: relocated - CFI:", location?.start?.cfi); // Cleaned up
 						// Relocated often fires after locationChanged and pagination calculations
@@ -276,6 +284,23 @@
 							);
 						}
 					};
+
+					// --- NEW: Prevent Default Mouse Wheel Scroll ---
+					document.getElementById("viewer").addEventListener(
+						"wheel",
+						function (event) {
+							// Prevent the default scroll behavior which causes large jumps
+							event.preventDefault();
+							// Optionally, trigger page turns (can be sensitive):
+							// if (event.deltaY > 0) { // Scrolling down
+							//  window.nextPage();
+							// } else if (event.deltaY < 0) { // Scrolling up
+							//  window.previousPage();
+							// }
+						},
+						{ passive: false }
+					); // Need passive: false to allow preventDefault
+					// --- END NEW ---
 				} catch (err) {
 					console.error("Error initializing Epub.js:", err);
 					if (window.FlutterChannel) {
@@ -344,9 +369,9 @@
 			function sendLocationUpdate(location) {
 				// --- NEW: Check if locations are ready ---
 				if (!window.locationsReady) {
-					console.log(
-						"JS sendLocationUpdate: Locations not ready, skipping."
-					);
+					// console.log(
+					// 	"JS sendLocationUpdate: Locations not ready, skipping."
+					// );
 					return;
 				}
 				// --- End NEW ---
@@ -387,16 +412,16 @@
 				};
 
 				// --- ADDED --- Log before sending
-				console.log(
-					"JS sendLocationUpdate: About to send message. FlutterChannel exists:",
-					window.FlutterChannel ? "Yes" : "No"
-				);
+				// console.log(
+				// 	"JS sendLocationUpdate: About to send message. FlutterChannel exists:",
+				// 	window.FlutterChannel ? "Yes" : "No"
+				// );
 				try {
 					const messageString = JSON.stringify(message);
-					console.log(
-						"JS sendLocationUpdate: Sending message:",
-						messageString
-					);
+					// console.log(
+					// 	"JS sendLocationUpdate: Sending message:",
+					// 	messageString
+					// );
 					// --- MODIFIED: Check channel type ---
 					if (
 						typeof window.FlutterChannel.postMessage === "function"
@@ -423,9 +448,9 @@
 			function sendPaginationInfo() {
 				// --- NEW: Check if locations are ready ---
 				if (!window.locationsReady) {
-					console.log(
-						"JS sendPaginationInfo: Locations not ready, skipping."
-					);
+					// console.log(
+					// 	"JS sendPaginationInfo: Locations not ready, skipping."
+					// );
 					return;
 				}
 				// --- End NEW ---
@@ -438,16 +463,16 @@
 				};
 
 				// --- ADDED --- Log before sending
-				console.log(
-					"JS sendPaginationInfo: About to send message. FlutterChannel exists:",
-					window.FlutterChannel ? "Yes" : "No"
-				);
+				// console.log(
+				// 	"JS sendPaginationInfo: About to send message. FlutterChannel exists:",
+				// 	window.FlutterChannel ? "Yes" : "No"
+				// );
 				try {
 					const messageString = JSON.stringify(message);
-					console.log(
-						"JS sendPaginationInfo: Sending message:",
-						messageString
-					);
+					// console.log(
+					// 	"JS sendPaginationInfo: Sending message:",
+					// 	messageString
+					// );
 					// --- MODIFIED: Check channel type ---
 					if (
 						typeof window.FlutterChannel.postMessage === "function"
@@ -514,7 +539,7 @@
 					console.error("navigateToHref: Rendition not available.");
 					return;
 				}
-				console.log("Navigating to href:", href);
+				// console.log("Navigating to href:", href);
 				try {
 					window.epubRendition.display(href);
 				} catch (err) {
@@ -544,16 +569,16 @@
 					// window.epubBook.locations.generate(2048).then(() => { /* retry? */ });
 					return;
 				}
-				console.log("Navigating to percentage:", percentage);
+				// console.log("Navigating to percentage:", percentage);
 				try {
 					const cfi =
 						window.epubBook.locations.cfiFromPercentage(percentage);
 					if (cfi) {
 						window.epubRendition.display(cfi);
-						console.log(
-							"Called display with CFI from percentage:",
-							cfi
-						);
+						// console.log(
+						// 	"Called display with CFI from percentage:",
+						// 	cfi
+						// );
 					} else {
 						console.warn(
 							"navigateToPercentage: Could not get CFI for percentage",
@@ -575,7 +600,7 @@
 					console.error("navigateToCfi: Rendition not available.");
 					return;
 				}
-				console.log("Navigating to CFI:", cfi);
+				// console.log("Navigating to CFI:", cfi);
 				try {
 					window.epubRendition.display(cfi);
 				} catch (err) {
@@ -583,6 +608,24 @@
 				}
 			}
 			// --- End NEW: Slider Navigation Functions ---
+
+			// --- NEW: Resize Handling ---
+			// Function called by Flutter when the window size changes
+			function handleResize(newWidth, newHeight) {
+				if (!window.epubRendition) {
+					console.warn("handleResize: Rendition not available.");
+					return;
+				}
+				console.log(
+					`JS handleResize: Resizing to ${newWidth} x ${newHeight}`
+				);
+				try {
+					window.epubRendition.resize(newWidth, newHeight);
+				} catch (err) {
+					console.error("Error calling rendition.resize:", err);
+				}
+			}
+			// --- End NEW: Resize Handling ---
 		</script>
 	</body>
 </html>

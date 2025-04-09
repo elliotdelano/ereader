@@ -1,32 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:epubx/epubx.dart';
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:provider/provider.dart';
 import 'package:ereader/providers/reader_settings_provider.dart';
 import 'package:ereader/providers/theme_provider.dart';
 import 'package:ereader/services/epub_server_service.dart';
-// import 'package:webview_flutter/webview_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
-import 'package:flutter/gestures.dart';
 import 'package:ereader/services/storage_service.dart';
-// import 'package:webview_cef/webview_cef.dart'; // Keep commented if adapters handle imports
-// import 'package:webview_flutter/webview_flutter.dart'; // Keep commented
 
-// --- NEW: Abstraction Imports ---
-import './platform_webview_interface.dart';
-import './mobile_webview_adapter.dart';
-import './desktop_webview_adapter.dart';
-// --- End NEW ---
+import 'webview/platform_webview_interface.dart';
+import 'webview/mobile_webview_adapter.dart';
+import 'webview/desktop_webview_adapter.dart';
 
 // Add a callback type for navigation methods if needed by parent
 // typedef ChapterNavigationCallback = void Function(String href);
 
-// --- NEW: Callback Type ---
 typedef EpubLocationChangedCallback =
     void Function(double percentage, String? cfi);
-// --- End NEW ---
 
 class CustomEpubViewer extends StatefulWidget {
   final String filePath;
@@ -69,10 +59,22 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   final String _jsChannelName = 'FlutterChannel';
   Timer? _saveProgressTimer; // ADDED: Timer for periodic saves
 
+  // --- NEW: Resize Handling State ---
+  Size? _previousSize;
+  Timer? _resizeDebounceTimer;
+  final Duration _resizeDebounceDuration = const Duration(milliseconds: 500);
+  // --- END NEW ---
+
   // Store previous settings to detect changes
   double? _previousFontSize;
   String? _previousFontFamily;
   AppTheme? _previousAppTheme;
+  EpubFlow? _previousEpubFlow;
+  EpubSpread? _previousEpubSpread;
+  // --- NEW: Previous Line Spacing / Margin State ---
+  double? _previousLineSpacing;
+  MarginSize? _previousMarginSize;
+  // --- END NEW ---
 
   @override
   void initState() {
@@ -224,11 +226,11 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
   void _handleJsMessage(String messageJsonString) {
     // --- ADDED LOGGING ---
-    print(
-      "[JS -> Dart] Received object type: ${messageJsonString.runtimeType}",
-    );
+    // print(
+    //   "[JS -> Dart] Received object type: ${messageJsonString.runtimeType}",
+    // );
     // --- END ADDED LOGGING ---
-    print("[JS -> Dart] Raw message: $messageJsonString");
+    // print("[JS -> Dart] Raw message: $messageJsonString");
     // --- END ADDED LOGGING ---
     try {
       // --- MODIFIED: Handle potential double-escaping from CEF ---
@@ -236,7 +238,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       if (messageJsonString.startsWith('"') &&
           messageJsonString.endsWith('"')) {
         // Likely double-escaped (CEF)
-        print("[JS -> Dart] Detected double-escaped string, decoding twice...");
+        // print("[JS -> Dart] Detected double-escaped string, decoding twice...");
         try {
           String singleEscapedJson = jsonDecode(messageJsonString);
           jsonData = jsonDecode(singleEscapedJson);
@@ -248,7 +250,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         }
       } else {
         // Likely single-escaped (Mobile or standard)
-        print("[JS -> Dart] Assuming standard JSON string, decoding once...");
+        // print("[JS -> Dart] Assuming standard JSON string, decoding once...");
         jsonData = jsonDecode(messageJsonString);
       }
 
@@ -267,7 +269,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
       if (action == 'locationUpdate') {
         final receivedCfi = data['cfi'];
-        print("[JS -> Dart] Received locationUpdate: CFI = $receivedCfi");
+        // print("[JS -> Dart] Received locationUpdate: CFI = $receivedCfi");
         if (mounted) {
           setState(() {
             _currentCfi = receivedCfi;
@@ -324,6 +326,20 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       jsInitialCfiArg = "'$escapedCfi'"; // Wrap in single quotes
     }
 
+    // --- MODIFIED: Get Flow/Spread Settings ---
+    final settingsProvider = Provider.of<ReaderSettingsProvider>(
+      context,
+      listen: false,
+    );
+    final epubFlowSetting = settingsProvider.epubFlow;
+    final epubSpreadSetting = settingsProvider.epubSpread;
+
+    // Convert enums to JS strings
+    final jsFlow =
+        epubFlowSetting == EpubFlow.scrolled ? "scrolled-doc" : "paginated";
+    final jsSpread = epubSpreadSetting == EpubSpread.auto ? "auto" : "none";
+    // --- END MODIFIED ---
+
     // Calculate adjusted width (multiple of 12 physical pixels) - REVERTING TO ROUND LOGICAL WIDTH
     // Use context safely, ensure it's available
     if (!mounted) return; // Check if widget is still mounted
@@ -339,9 +355,18 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // Pass the channel object directly by its name
     // Pass the escaped initial CFI
     // Pass the ROUNDED LOGICAL width and calculated height
+    // --- MODIFIED: Pass flow and spread strings to JS ---
     final jsCode = '''
-       initializeEpubReader('$escapedOpfPath', $jsInitialCfiArg, $roundedLogicalWidth, $screenHeightLogical);
+       initializeEpubReader(
+         '$escapedOpfPath',
+         $jsInitialCfiArg,
+         $roundedLogicalWidth,
+         $screenHeightLogical,
+         '$jsFlow', // Pass flow
+         '$jsSpread' // Pass spread
+       );
     ''';
+    // --- END MODIFIED ---
     try {
       // Use interface method
       await _platformWebViewController!.runJavaScript(jsCode);
@@ -373,27 +398,92 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     final currentFontSize = settingsProvider.fontSize;
     final currentFontFamily = settingsProvider.fontFamily;
     final currentTheme = themeProvider.currentTheme;
+    final currentEpubFlow = settingsProvider.epubFlow;
+    final currentEpubSpread = settingsProvider.epubSpread;
+    // --- NEW: Get current spacing/margins ---
+    final currentLineSpacing = settingsProvider.lineSpacing;
+    final currentMarginSize = settingsProvider.marginSize;
+    // --- END NEW ---
 
     bool changed = false;
+    bool flowOrSpreadChanged = false; // Flag for flow/spread changes
+    // --- NEW: Flags for other reload-triggering settings ---
+    bool lineSpacingChanged = false;
+    bool marginSizeChanged = false;
+    // --- END NEW ---
+
+    // Check if it's the first run (any previous value is null)
     if (_previousFontSize == null ||
         _previousFontFamily == null ||
-        _previousAppTheme == null) {
-      changed = true;
+        _previousAppTheme == null ||
+        _previousEpubFlow == null ||
+        _previousEpubSpread == null ||
+        // --- NEW: Check previous spacing/margins ---
+        _previousLineSpacing == null ||
+        _previousMarginSize == null
+    // --- END NEW ---
+    ) {
+      changed = true; // Treat first run as changed
     } else {
+      // Compare current values with previous ones
       if (_previousFontSize != currentFontSize) changed = true;
       if (_previousFontFamily != currentFontFamily) changed = true;
       if (_previousAppTheme != currentTheme) changed = true;
+      if (_previousEpubFlow != currentEpubFlow) {
+        changed = true;
+        flowOrSpreadChanged = true;
+      }
+      if (_previousEpubSpread != currentEpubSpread) {
+        changed = true;
+        flowOrSpreadChanged = true;
+      }
+      // --- NEW: Check spacing/margin changes ---
+      if (_previousLineSpacing != currentLineSpacing) {
+        changed = true;
+        lineSpacingChanged = true;
+      }
+      if (_previousMarginSize != currentMarginSize) {
+        changed = true;
+        marginSizeChanged = true;
+      }
+      // --- END NEW ---
     }
 
     if (changed) {
-      print("(Build) Settings changed, applying to WebView...");
-      _applyThemeAndFontFamilyToWebView();
+      // --- MODIFIED: Trigger reload if flow, spread, spacing, OR margins changed ---
+      if (flowOrSpreadChanged || lineSpacingChanged || marginSizeChanged) {
+        print(
+          "(Build) Flow, Spread, Line Spacing, or Margin changed, re-initializing EPUB...",
+        );
+        // Store ALL new settings BEFORE reloading
+        _previousFontSize = currentFontSize;
+        _previousFontFamily = currentFontFamily;
+        _previousAppTheme = currentTheme;
+        _previousEpubFlow = currentEpubFlow;
+        _previousEpubSpread = currentEpubSpread;
+        _previousLineSpacing = currentLineSpacing;
+        _previousMarginSize = currentMarginSize;
+
+        _initializeAndLoadEpub(); // Trigger full reload
+        return; // Exit early, reload will handle applying styles
+      }
+      // --- END MODIFIED ---
+
+      // If only theme, font size, or font family changed, apply dynamically
+      print("(Build) Settings changed (Theme/Font), applying dynamically...");
+      _applyThemeAndFontFamilyToWebView(); // Applies margins/line height too
       _applyFontSizeToWebView();
 
-      // Store current settings for next check
+      // Store ALL current settings for next check
       _previousFontSize = currentFontSize;
       _previousFontFamily = currentFontFamily;
       _previousAppTheme = currentTheme;
+      _previousEpubFlow = currentEpubFlow;
+      _previousEpubSpread = currentEpubSpread;
+      // --- NEW: Store current spacing/margins ---
+      _previousLineSpacing = currentLineSpacing;
+      _previousMarginSize = currentMarginSize;
+      // --- END NEW ---
     }
   }
 
@@ -409,9 +499,17 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
     final currentTheme = themeProvider.currentTheme;
     final currentFontFamily = settingsProvider.fontFamily;
+    // --- NEW: Get Line Spacing & Margins ---
+    final currentLineSpacing = settingsProvider.lineSpacing;
+    final currentMarginSize = settingsProvider.marginSize;
+    // --- END NEW ---
 
     // 1. Build the base theme styles
-    Map<String, dynamic> styles = _getThemeBaseStyles(currentTheme);
+    Map<String, dynamic> styles = _getThemeBaseStyles(
+      currentTheme,
+      currentLineSpacing,
+      currentMarginSize,
+    );
 
     // 2. Add font *family* to the body style within the rules
     if (styles['body'] is! Map) {
@@ -456,7 +554,11 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     }
   }
 
-  Map<String, dynamic> _getThemeBaseStyles(AppTheme theme) {
+  Map<String, dynamic> _getThemeBaseStyles(
+    AppTheme theme,
+    double lineSpacing,
+    MarginSize marginSize,
+  ) {
     // Get the current theme data directly
     final themeData =
         Provider.of<ThemeProvider>(context, listen: false).themeData;
@@ -471,9 +573,26 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         'text-decoration': 'none',
       },
       'a:hover': {'text-decoration': 'underline'},
-      'p': {'line-height': '1.5', 'margin-bottom': '0.8em'},
+      'p': {'line-height': lineSpacing.toString(), 'margin-bottom': '0.8em'},
       // Add more common rules if needed
     };
+
+    // --- NEW: Determine Padding based on MarginSize ---
+    String paddingValue;
+    switch (marginSize) {
+      case MarginSize.none:
+        paddingValue = '0';
+        break;
+      case MarginSize.small:
+        paddingValue = '2%'; // Example value
+        break;
+      case MarginSize.large:
+        paddingValue = '8%'; // Example value
+        break;
+      default:
+        paddingValue = '5%'; // Default to medium
+    }
+    // --- END NEW ---
 
     // Define theme-specific overrides based on ThemeData
     Map<String, dynamic> bodyStyles = {
@@ -481,6 +600,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       'color': _colorToCss(
         colorScheme.onSurface,
       ), // Use onSurface for main text
+      'padding': paddingValue,
     };
 
     // Combine common rules and body styles
@@ -523,6 +643,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // --- NEW: Unregister observer, cancel timer, and save final progress ---
     WidgetsBinding.instance.removeObserver(this);
     _saveProgressTimer?.cancel();
+    _resizeDebounceTimer?.cancel(); // ADDED: Cancel resize timer
     _saveCurrentProgress(isClosing: true); // Ensure final save on dispose
     // --- End NEW ---
 
@@ -563,6 +684,16 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // WATCH providers here to trigger rebuilds when settings change
     context.watch<ReaderSettingsProvider>();
     context.watch<ThemeProvider>();
+
+    // --- NEW: Resize Detection (only for desktop) ---
+    if (_isDesktop) {
+      final Size currentSize = MediaQuery.sizeOf(context);
+      if (_previousSize != null && currentSize != _previousSize) {
+        _handleResizeDebounced(currentSize);
+      }
+      _previousSize = currentSize; // Store current size for next build
+    }
+    // --- END NEW ---
 
     // Call the update check on every build AFTER watching providers
     // Use a post-frame callback to ensure it runs after the build completes
@@ -637,6 +768,55 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
     return Stack(children: [_buildPlatformWebView()]);
   }
+
+  // --- NEW: Debounced Resize Handler ---
+  void _handleResizeDebounced(Size newSize) {
+    if (_resizeDebounceTimer?.isActive ?? false) {
+      _resizeDebounceTimer!.cancel();
+    }
+    _resizeDebounceTimer = Timer(_resizeDebounceDuration, () {
+      _callJsResize(newSize);
+    });
+  }
+
+  // --- NEW: Function to call JS resize ---
+  Future<void> _callJsResize(Size newSize) async {
+    // Don't resize if controller isn't ready, not on desktop, or still loading initial epub
+    if (_platformWebViewController == null ||
+        !_isDesktop ||
+        _isLoading ||
+        !_platformWebViewController!.isInitialized)
+      return;
+
+    // Get padding info, ensuring context is still valid
+    if (!mounted) return;
+    final queryData = MediaQuery.of(context);
+    final screenWidthLogical = newSize.width;
+    final screenHeightLogical =
+        newSize.height -
+        queryData.padding.top -
+        queryData.padding.bottom; // Usable height
+
+    // Calculate nearest multiple of 12 for the LOGICAL width
+    final roundedLogicalWidth = (screenWidthLogical / 12).round() * 12;
+
+    // Ensure non-zero dimensions before sending
+    if (roundedLogicalWidth <= 0 || screenHeightLogical <= 0) {
+      print(
+        "[Resize] Calculated zero or negative dimension, skipping JS call.",
+      );
+      return;
+    }
+
+    final jsCode = 'handleResize($roundedLogicalWidth, $screenHeightLogical);';
+    print("[Resize] Calling JS: $jsCode");
+    try {
+      await _platformWebViewController!.runJavaScript(jsCode);
+    } catch (e) {
+      print("[Resize] Error calling handleResize in JS: $e");
+    }
+  }
+  // --- END NEW ---
 
   /// Fetches the Table of Contents as a JSON string from the underlying EPUB.
   /// Returns null if the ToC cannot be fetched.
@@ -744,9 +924,9 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   Future<void> _saveCurrentProgress({bool isClosing = false}) async {
     final logPrefix = isClosing ? "(Dispose)" : "(Auto-save)";
     if (_currentCfi != null && _currentCfi!.isNotEmpty) {
-      print(
-        "$logPrefix Saving progress: Attempting with CFI='$_currentCfi', Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
-      );
+      // print(
+      //   "$logPrefix Saving progress: Attempting with CFI='$_currentCfi', Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
+      // );
       try {
         await _storageService.saveReadingProgress(
           widget.filePath,

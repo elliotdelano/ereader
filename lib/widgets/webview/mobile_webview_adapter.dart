@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import './platform_webview_interface.dart';
+import 'platform_webview_interface.dart';
 
 /// Mobile implementation using webview_flutter.
 class MobileWebViewAdapter implements PlatformWebViewInterface {

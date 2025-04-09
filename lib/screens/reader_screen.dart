@@ -3,12 +3,14 @@ import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:io';
 
 import '../models/book.dart';
 import '../providers/theme_provider.dart';
 import '../providers/reader_settings_provider.dart';
 import '../services/storage_service.dart';
-import '../widgets/custom_epub_viewer.dart';
+import '../widgets/epub_viewer.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Book book;
@@ -38,6 +40,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
   // Placeholder for current location (page number for PDF, locator for EPUB)
   final String _currentLocation = '';
 
+  // --- NEW: State for Sliding Panels ---
+  bool _isSettingsPanelVisible = false;
+  bool _isTocPanelVisible = false;
+  List<Map<String, dynamic>>? _currentTocList; // To hold loaded ToC data
+  // --- END NEW ---
+
+  // --- NEW: Focus Node for Keyboard Events ---
+  final FocusNode _focusNode = FocusNode();
+  // --- END NEW ---
+
   @override
   void initState() {
     super.initState();
@@ -51,61 +63,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _markAsCurrentlyReading();
     // For EPUB, we now use a custom EPUB viewer widget. No controller needed.
+    // --- NEW: Request Focus ---
+    // Request focus after the first frame to ensure the widget is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_focusNode);
+      }
+    });
+    // --- END NEW ---
   }
 
   @override
   void dispose() {
     _pdfController?.dispose(); // Dispose if it was created
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // --- NEW: Dispose FocusNode ---
+    _focusNode.dispose();
+    // --- END NEW ---
     super.dispose();
   }
 
-  // Placeholder for showing settings (theme, font)
+  // --- NEW: Method to dismiss panels ---
+  void _dismissPanels() {
+    if (!mounted) return;
+    setState(() {
+      _isSettingsPanelVisible = false;
+      _isTocPanelVisible = false;
+    });
+  }
+  // --- END NEW ---
+
   Future<void> _showSettings() async {
-    // Get current settings to compare later
-    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
-    final settingsProvider = Provider.of<ReaderSettingsProvider>(
-      context,
-      listen: false,
-    );
+    // --- MODIFIED: Remove fetching initial values (not needed by panel) ---
+    // final settingsProvider = Provider.of<ReaderSettingsProvider>(
+    //   context,
+    //   listen: false,
+    // );
+    // final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    // final initialTheme = themeProvider.currentTheme;
+    // final initialFontSize = settingsProvider.fontSize;
+    // final initialFontFamily = settingsProvider.fontFamily;
+    // --- END MODIFIED ---
 
-    final initialTheme = themeProvider.currentTheme;
-    final initialFontSize = settingsProvider.fontSize;
-    final initialFontFamily = settingsProvider.fontFamily;
-
-    // Use a StatefulWidget for the modal content to manage temporary state
-    await showModalBottomSheet(
-      context: context,
-      builder: (context) {
-        return _SettingsModal(
-          initialTheme: initialTheme,
-          initialFontSize: initialFontSize,
-          initialFontFamily: initialFontFamily,
-        );
-      },
-    );
-
-    // ---- Code below executes after modal is closed ----
-
-    // Get the potentially updated provider values
-    final newTheme = themeProvider.currentTheme;
-    final newFontSize = settingsProvider.fontSize;
-    final newFontFamily = settingsProvider.fontFamily;
-
-    // Check if settings actually changed
-    final bool settingsChanged =
-        initialTheme != newTheme ||
-        initialFontSize != newFontSize ||
-        initialFontFamily != newFontFamily;
-
-    if (settingsChanged && widget.book.format == BookFormat.epub) {
-      print("Settings changed, applying to EPUB...");
-
-      // *** NEW APPROACH: No explicit reload needed ***
-      // HtmlEpubReaderView consumes the providers and will rebuild automatically
-      // triggering flutter_html to re-render with the new Style object.
-      // The pagination calculation should also re-run on layout changes.
-    }
+    // Toggle panel visibility
+    setState(() {
+      _isTocPanelVisible = false; // Close ToC if open
+      _isSettingsPanelVisible = !_isSettingsPanelVisible;
+    });
   }
 
   Future<void> _loadInitialData() async {
@@ -140,6 +144,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // Initialize slider and book percentage state
       _currentBookPercentage = initialPercentage;
       _sliderValue = initialPercentage;
+
+      // --- NEW: Pre-fetch ToC silently ---
+      // We need the key available which means the viewer must have been built at least once.
+      // Let's try fetching after a short delay post-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (mounted && _epubViewerKey.currentState != null) {
+          try {
+            final tocJson = await _epubViewerKey.currentState!.getTocJson();
+            if (tocJson != null && tocJson.isNotEmpty) {
+              final List<dynamic> tocRaw = jsonDecode(tocJson);
+              _currentTocList = List<Map<String, dynamic>>.from(tocRaw);
+              print("Pre-fetched ToC successfully.");
+            } else {
+              print("Pre-fetched ToC was null or empty.");
+            }
+          } catch (e) {
+            print("Error pre-fetching ToC: $e");
+          }
+        }
+      });
+      // --- END NEW ---
     }
     if (mounted) {
       setState(() {
@@ -149,199 +174,58 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _showTableOfContents() async {
-    // Ensure it's an EPUB and the key is valid
-    if (widget.book.format != BookFormat.epub ||
-        _epubViewerKey.currentState == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Table of Contents not available for this format or viewer not ready.',
-          ),
-        ),
+    if (widget.book.format != BookFormat.epub) return;
+
+    // --- MODIFIED: Use pre-fetched ToC or fetch now ---
+    if (_currentTocList == null) {
+      // Attempt to fetch if not pre-fetched
+      if (_epubViewerKey.currentState == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Viewer not ready.')));
+        return;
+      }
+      showDialog(
+        context: context,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+        barrierDismissible: false,
       );
-      return;
-    }
-
-    // Show loading indicator while fetching
-    showDialog(
-      context: context,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-      barrierDismissible: false,
-    );
-
-    final tocJson = await _epubViewerKey.currentState!.getTocJson();
-
-    Navigator.pop(context); // Dismiss loading indicator
-
-    if (tocJson == null || tocJson.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not load Table of Contents.')),
-      );
-      return;
-    }
-
-    try {
-      final List<dynamic> tocRaw = jsonDecode(tocJson);
-      final List<Map<String, dynamic>> tocList =
-          List<Map<String, dynamic>>.from(tocRaw);
-
-      if (tocList.isEmpty) {
+      try {
+        final tocJson = await _epubViewerKey.currentState!.getTocJson();
+        Navigator.pop(context); // Dismiss loading
+        if (tocJson != null && tocJson.isNotEmpty) {
+          final List<dynamic> tocRaw = jsonDecode(tocJson);
+          _currentTocList = List<Map<String, dynamic>>.from(tocRaw);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not load Table of Contents.')),
+          );
+          return;
+        }
+      } catch (e) {
+        Navigator.pop(context); // Dismiss loading on error
+        print("Error fetching ToC: $e");
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Table of Contents is empty.')),
+          const SnackBar(content: Text('Error loading Table of Contents.')),
         );
         return;
       }
+    }
 
-      showModalBottomSheet(
-        context: context,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        builder: (context) {
-          return DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.6, // Start at 60% height
-            minChildSize: 0.3, // Min 30% height
-            maxChildSize: 0.9, // Max 90% height
-            builder: (context, scrollController) {
-              return Column(
-                children: [
-                  // Handle for dragging
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Container(
-                      width: 40,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[400],
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      bottom: 8.0,
-                      left: 16.0,
-                      right: 16.0,
-                    ),
-                    child: Text(
-                      "Table of Contents",
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: tocList.length,
-                      itemBuilder: (context, index) {
-                        final item = tocList[index];
-                        final String label = item['label'] ?? 'Untitled';
-                        final String? href = item['href'];
-                        final int depth = item['depth'] ?? 0;
-
-                        return ListTile(
-                          contentPadding: EdgeInsets.only(
-                            left: 16.0 + (depth * 16.0),
-                            right: 16.0,
-                          ), // Indentation
-                          title: Text(
-                            label,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          dense: true,
-                          onTap:
-                              href == null
-                                  ? null
-                                  : () {
-                                    print("Navigating to: $href");
-                                    _epubViewerKey.currentState?.navigateToHref(
-                                      href,
-                                    );
-                                    Navigator.pop(
-                                      context,
-                                    ); // Close the bottom sheet
-                                  },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-    } catch (e) {
-      print("Error decoding or displaying ToC: $e");
+    if (_currentTocList == null || _currentTocList!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error displaying Table of Contents.')),
+        const SnackBar(content: Text('Table of Contents is empty.')),
       );
+      return;
     }
+
+    // Toggle panel visibility
+    setState(() {
+      _isSettingsPanelVisible = false; // Close settings if open
+      _isTocPanelVisible = !_isTocPanelVisible;
+    });
+    // --- END MODIFIED ---
   }
-
-  void _handleTap(TapUpDetails details) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final tapX = details.localPosition.dx;
-
-    // Define tap zones (adjust percentages as needed)
-    final leftZoneEnd = screenWidth * 0.35;
-    final rightZoneStart = screenWidth * 0.65;
-
-    if (tapX < leftZoneEnd) {
-      // Tap on left: Previous page
-      _epubViewerKey.currentState?.previousPage();
-    } else if (tapX > rightZoneStart) {
-      // Tap on right: Next page
-      _epubViewerKey.currentState?.nextPage();
-    } else {
-      // Tap in center: Toggle AppBar and System UI
-      setState(() {
-        _isAppBarVisible = !_isAppBarVisible;
-      });
-
-      // Update System UI based on AppBar visibility
-      if (_isAppBarVisible) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      } else {
-        SystemChrome.setEnabledSystemUIMode(
-          SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top],
-        );
-      }
-    }
-  }
-
-  // NEW: Handle horizontal swipes for page turning
-  void _handleHorizontalSwipe(DragEndDetails details) {
-    if (widget.book.format != BookFormat.epub) return; // Only for EPUBs
-
-    // Velocity check to determine direction and intent
-    // Adjust the threshold (e.g., 500) as needed for sensitivity
-    if (details.primaryVelocity != null) {
-      if (details.primaryVelocity! < -500) {
-        // Swiped Left (->): Next Page
-        _epubViewerKey.currentState?.nextPage();
-      } else if (details.primaryVelocity! > 500) {
-        // Swiped Right (<-): Previous Page
-        _epubViewerKey.currentState?.previousPage();
-      }
-    }
-  }
-
-  // --- NEW: Handle Location Update from Viewer ---
-  void _handleLocationUpdate(double percentage, String? cfi) {
-    if (mounted) {
-      setState(() {
-        _currentBookPercentage = percentage;
-        _currentCfiFromViewer = cfi;
-        // Only update slider's visual value if user isn't actively dragging it
-        if (!_isScrubbing) {
-          _sliderValue = percentage;
-        }
-      });
-    }
-  }
-  // --- End NEW ---
 
   @override
   Widget build(BuildContext context) {
@@ -366,183 +250,264 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     SystemChrome.setSystemUIOverlayStyle(overlayStyle);
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      body: Stack(
-        children: [
-          // Main content with padding
-          Padding(
-            padding: EdgeInsets.only(top: topPadding),
-            child: _buildReaderView(settingsProvider),
-          ),
-          // Invisible gesture detector covering only the main content area
-          // Placed *before* the AppBar in the Stack order
-          Positioned(
-            top: topPadding,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: GestureDetector(
-              onTapUp: _handleTap,
-              onHorizontalDragEnd:
-                  _handleHorizontalSwipe, // ADDED: Handle swipes
-              behavior:
-                  HitTestBehavior
-                      .translucent, // Allows taps to pass through if needed, but primarily for AppBar toggle
-            ),
-          ),
-          // Floating AppBar with fade animation
-          // Placed *after* the GestureDetector, so it's on top when visible
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 200),
-              opacity: _isAppBarVisible ? 1.0 : 0.0,
-              child: IgnorePointer(
-                ignoring:
-                    !_isAppBarVisible, // Allows interaction ONLY when visible
-                child: SafeArea(
-                  bottom: false,
-                  child: Container(
-                    margin: const EdgeInsets.only(left: 8, right: 8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).scaffoldBackgroundColor.withAlpha(230),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withAlpha(100),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Column(
-                      // NEW: Wrap AppBar and Slider
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AppBar(
-                          backgroundColor: Colors.transparent,
-                          elevation: 0,
-                          title: Text(widget.book.title),
-                          actions: [
-                            if (widget.book.format == BookFormat.epub)
-                              IconButton(
-                                icon: const Icon(Icons.list),
-                                tooltip: 'Table of Contents',
-                                onPressed: _showTableOfContents,
-                              ),
-                            IconButton(
-                              icon: const Icon(Icons.settings_outlined),
-                              tooltip: 'Settings',
-                              onPressed: _showSettings,
-                            ),
-                          ],
-                        ),
-                        // --- NEW: Slider Added Here ---
-                        if (widget.book.format == BookFormat.epub)
-                          SizedBox(
-                            height: 20, // Height for the slider area
-                            child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                trackHeight: 2.0,
-                                thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 6.0,
-                                ),
-                                overlayShape: const RoundSliderOverlayShape(
-                                  overlayRadius: 12.0,
-                                ),
-                                activeTrackColor:
-                                    Theme.of(context).colorScheme.primary,
-                                inactiveTrackColor: (isDarkMode
-                                        ? Colors.grey.shade800
-                                        : Colors.grey.shade300)
-                                    .withAlpha(150),
-                                thumbColor:
-                                    Theme.of(context).colorScheme.primary,
-                                overlayColor: Theme.of(
-                                  context,
-                                ).colorScheme.primary.withAlpha(60),
-                              ),
-                              child: Slider(
-                                value: _sliderValue.clamp(
-                                  0.0,
-                                  1.0,
-                                ), // Use _sliderValue
-                                min: 0.0,
-                                max: 1.0,
-                                onChangeStart: (value) {
-                                  setState(() {
-                                    _isScrubbing = true;
-                                    _preScrubCfi = _currentCfiFromViewer;
-                                    print(
-                                      "Slider scrub start, saved CFI: $_preScrubCfi",
-                                    );
-                                  });
-                                },
-                                onChanged: (value) {
-                                  setState(() {
-                                    // Only update visual slider value
-                                    _sliderValue = value;
-                                  });
-                                },
-                                onChangeEnd: (value) {
-                                  print(
-                                    "Slider scrub end at: ${value.toStringAsFixed(4)}",
-                                  );
-                                  // Use GlobalKey to call viewer's method
-                                  _epubViewerKey.currentState
-                                      ?.navigateToPercentage(value);
+    // --- MODIFIED: Calculate panel dimensions ---
+    const double panelMaxHeight = 450.0;
+    const double panelMaxWidth = 500.0; // Define max width
+    final double screenWidth = MediaQuery.sizeOf(context).width;
+    final double screenHeight = MediaQuery.sizeOf(context).height;
 
-                                  // Show Undo SnackBar
-                                  if (mounted && _preScrubCfi != null) {
-                                    ScaffoldMessenger.of(
-                                      context,
-                                    ).removeCurrentSnackBar(); // Remove previous if any
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: const Text(
-                                          'Jumped to location',
+    // Calculate actual width, respecting max width and side padding (20px each side)
+    final double actualPanelWidth = math.min(screenWidth - 40.0, panelMaxWidth);
+    // Calculate left offset to center the panel
+    final double panelLeftOffset = (screenWidth - actualPanelWidth) / 2.0;
+
+    // Position off-screen calculation (adjust if necessary)
+    final double panelHiddenPosition = -(panelMaxHeight + 50);
+    // Position on-screen (adjust vertical offset from bottom)
+    const double panelVisibleOffset = 20.0;
+    // --- END MODIFIED ---
+
+    // --- MODIFIED: Wrap Scaffold with Focus and KeyboardListener ---
+    return KeyboardListener(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: Stack(
+          children: [
+            // Layer 1: Main reader content
+            Padding(
+              padding: EdgeInsets.only(top: topPadding),
+              child: _buildReaderView(settingsProvider),
+            ),
+
+            // --- REVERTED: Use Three Gesture Detectors ---
+            // Define zones for clarity
+            Positioned.fill(
+              top: topPadding, // Start below status bar area
+              child: Row(
+                children: [
+                  // Left Zone (Tap/Swipe)
+                  Expanded(
+                    flex: 35, // Corresponds to 35%
+                    child: GestureDetector(
+                      onTap: _handleLeftTap,
+                      onHorizontalDragEnd: _handleHorizontalSwipe,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(color: Colors.transparent), // Fill area
+                    ),
+                  ),
+                  // Center Zone (Tap for AppBar only)
+                  Expanded(
+                    flex: 30, // Corresponds to 30%
+                    child: GestureDetector(
+                      onTap: _handleCenterTap,
+                      onHorizontalDragEnd: _handleHorizontalSwipe,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(color: Colors.transparent),
+                    ),
+                  ),
+                  // Right Zone (Tap/Swipe)
+                  Expanded(
+                    flex: 35, // Corresponds to 35%
+                    child: GestureDetector(
+                      onTap: _handleRightTap,
+                      onHorizontalDragEnd: _handleHorizontalSwipe,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(color: Colors.transparent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // --- END REVERTED ---
+
+            // Layer 4: Dimming background for panels
+            Visibility(
+              visible: _isSettingsPanelVisible || _isTocPanelVisible,
+              child: GestureDetector(
+                onTap: _dismissPanels,
+                child: Container(color: Colors.black.withAlpha(100)),
+              ),
+            ),
+
+            // Layer 5: Settings Panel
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              bottom:
+                  _isSettingsPanelVisible
+                      ? panelVisibleOffset
+                      : panelHiddenPosition,
+              left: panelLeftOffset,
+              width: actualPanelWidth,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: panelMaxHeight),
+                child: Material(
+                  elevation: 8.0,
+                  borderRadius: BorderRadius.circular(16.0),
+                  child: SettingsPanelContent(),
+                ),
+              ),
+            ),
+
+            // Layer 6: ToC Panel
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              bottom:
+                  _isTocPanelVisible ? panelVisibleOffset : panelHiddenPosition,
+              left: panelLeftOffset,
+              width: actualPanelWidth,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: panelMaxHeight),
+                child: Material(
+                  elevation: 8.0,
+                  borderRadius: BorderRadius.circular(16.0),
+                  child: TocPanelContent(
+                    tocList: _currentTocList ?? [],
+                    onItemTap: (href) {
+                      _epubViewerKey.currentState?.navigateToHref(href);
+                      _dismissPanels();
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+            // Layer 7: Floating AppBar
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _isAppBarVisible ? 1.0 : 0.0,
+                child: IgnorePointer(
+                  ignoring: !_isAppBarVisible,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Container(
+                      margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withAlpha(230),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withAlpha(30),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AppBar(
+                            backgroundColor: Colors.transparent,
+                            elevation: 0,
+                            title: Text(widget.book.title),
+                            actions: [
+                              if (widget.book.format == BookFormat.epub)
+                                IconButton(
+                                  icon: const Icon(Icons.list),
+                                  tooltip: 'Table of Contents',
+                                  onPressed: _showTableOfContents,
+                                ),
+                              IconButton(
+                                icon: const Icon(Icons.settings_outlined),
+                                tooltip: 'Settings',
+                                onPressed: _showSettings,
+                              ),
+                            ],
+                          ),
+                          if (widget.book.format == BookFormat.epub)
+                            SizedBox(
+                              height: 20,
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 2.0,
+                                  thumbShape: const RoundSliderThumbShape(
+                                    enabledThumbRadius: 6.0,
+                                  ),
+                                  overlayShape: const RoundSliderOverlayShape(
+                                    overlayRadius: 12.0,
+                                  ),
+                                  activeTrackColor:
+                                      Theme.of(context).colorScheme.primary,
+                                  inactiveTrackColor: (isDarkMode
+                                          ? Colors.grey.shade800
+                                          : Colors.grey.shade300)
+                                      .withAlpha(150),
+                                  thumbColor:
+                                      Theme.of(context).colorScheme.primary,
+                                  overlayColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withAlpha(60),
+                                ),
+                                child: Slider(
+                                  value: _sliderValue.clamp(0.0, 1.0),
+                                  min: 0.0,
+                                  max: 1.0,
+                                  onChangeStart: (value) {
+                                    setState(() {
+                                      _isScrubbing = true;
+                                      _preScrubCfi = _currentCfiFromViewer;
+                                    });
+                                  },
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _sliderValue = value;
+                                    });
+                                  },
+                                  onChangeEnd: (value) {
+                                    _epubViewerKey.currentState
+                                        ?.navigateToPercentage(value);
+                                    if (mounted && _preScrubCfi != null) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).removeCurrentSnackBar();
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: const Text(
+                                            'Jumped to location',
+                                          ),
+                                          action: SnackBarAction(
+                                            label: 'Undo',
+                                            onPressed: () {
+                                              if (_preScrubCfi != null) {
+                                                _epubViewerKey.currentState
+                                                    ?.navigateToCfi(
+                                                      _preScrubCfi!,
+                                                    );
+                                              }
+                                            },
+                                          ),
+                                          duration: const Duration(seconds: 4),
                                         ),
-                                        action: SnackBarAction(
-                                          label: 'Undo',
-                                          onPressed: () {
-                                            print(
-                                              "Undo pressed, navigating back to: $_preScrubCfi",
-                                            );
-                                            if (_preScrubCfi != null) {
-                                              _epubViewerKey.currentState
-                                                  ?.navigateToCfi(
-                                                    _preScrubCfi!,
-                                                  );
-                                            }
-                                          },
-                                        ),
-                                        duration: const Duration(seconds: 4),
-                                      ),
-                                    );
-                                  }
-                                  // Important: Reset scrubbing flag and preScrubCfi after nav
-                                  setState(() {
-                                    _isScrubbing = false;
-                                    _preScrubCfi = null;
-                                  });
-                                },
+                                      );
+                                    }
+                                    setState(() {
+                                      _isScrubbing = false;
+                                      _preScrubCfi = null;
+                                    });
+                                  },
+                                ),
                               ),
                             ),
-                          ),
-                        // --- End Slider ---
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -580,110 +545,479 @@ class _ReaderScreenState extends State<ReaderScreen> {
       print("Error marking book as currently reading: $e");
     }
   }
-}
 
-// StatefulWidget for the Modal Bottom Sheet Content
-class _SettingsModal extends StatefulWidget {
-  final AppTheme initialTheme;
-  final double initialFontSize;
-  final String initialFontFamily;
-
-  const _SettingsModal({
-    required this.initialTheme,
-    required this.initialFontSize,
-    required this.initialFontFamily,
-  });
-
-  @override
-  State<_SettingsModal> createState() => _SettingsModalState();
-}
-
-class _SettingsModalState extends State<_SettingsModal> {
-  late AppTheme _currentTheme;
-  late double _currentFontSize;
-  late String _currentFontFamily;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentTheme = widget.initialTheme;
-    _currentFontSize = widget.initialFontSize;
-    _currentFontFamily = widget.initialFontFamily;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Access providers for available options and *setting* the values
-    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+  // --- NEW: Dedicated Tap Handlers ---
+  void _handleLeftTap() {
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
       listen: false,
     );
+    if (settingsProvider.epubFlow != EpubFlow.scrolled) {
+      _epubViewerKey.currentState?.previousPage();
+    }
+  }
 
+  void _handleCenterTap() {
+    setState(() {
+      _isAppBarVisible = !_isAppBarVisible;
+    });
+    if (_isAppBarVisible) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [SystemUiOverlay.top],
+      );
+    }
+  }
+
+  void _handleRightTap() {
+    final settingsProvider = Provider.of<ReaderSettingsProvider>(
+      context,
+      listen: false,
+    );
+    if (settingsProvider.epubFlow != EpubFlow.scrolled) {
+      _epubViewerKey.currentState?.nextPage();
+    }
+  }
+  // --- END NEW ---
+
+  // --- NEW: Handle Location Update from Viewer ---
+  void _handleLocationUpdate(double percentage, String? cfi) {
+    if (mounted) {
+      setState(() {
+        _currentBookPercentage = percentage;
+        _currentCfiFromViewer = cfi;
+        // Only update slider's visual value if user isn't actively dragging it
+        if (!_isScrubbing) {
+          _sliderValue = percentage;
+        }
+      });
+    }
+  }
+  // --- End NEW ---
+
+  // NEW: Handle horizontal swipes for page turning
+  void _handleHorizontalSwipe(DragEndDetails details) {
+    // --- NEW: Log swipe detection ---
+    print(
+      "[Gesture] _handleHorizontalSwipe fired with velocity ${details.primaryVelocity}",
+    );
+    // --- END NEW ---
+    if (widget.book.format != BookFormat.epub) return; // Only for EPUBs
+
+    // --- NEW: Check flow mode before handling swipes ---
+    final settingsProvider = Provider.of<ReaderSettingsProvider>(
+      context,
+      listen: false,
+    );
+    if (settingsProvider.epubFlow == EpubFlow.scrolled) {
+      return; // Do nothing in scroll mode
+    }
+    // --- END NEW ---
+
+    // Velocity check to determine direction and intent
+    // Adjust the threshold (e.g., 500) as needed for sensitivity
+    if (details.primaryVelocity != null) {
+      if (details.primaryVelocity! < -500) {
+        // Swiped Left (->): Next Page
+        _epubViewerKey.currentState?.nextPage();
+      } else if (details.primaryVelocity! > 500) {
+        // Swiped Right (<-): Previous Page
+        _epubViewerKey.currentState?.previousPage();
+      }
+    }
+  }
+
+  // --- NEW: Keyboard Event Handler ---
+  void _handleKeyEvent(KeyEvent event) {
+    // --- MODIFIED: Check platform directly ---
+    if (event is KeyDownEvent && // Process key down events
+        (Platform.isWindows || Platform.isLinux) && // Only on desktop
+        widget.book.format == BookFormat.epub) {
+      // Only for EPUBs
+      // --- END MODIFIED ---
+
+      final settingsProvider = Provider.of<ReaderSettingsProvider>(
+        context,
+        listen: false,
+      );
+
+      // Only handle arrows if in paginated mode
+      if (settingsProvider.epubFlow == EpubFlow.paginated) {
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          print("[Keyboard] Left Arrow Pressed");
+          _epubViewerKey.currentState?.previousPage();
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          print("[Keyboard] Right Arrow Pressed");
+          _epubViewerKey.currentState?.nextPage();
+        }
+      }
+    }
+  }
+
+  // --- END NEW ---
+}
+
+// --- MODIFIED: Remove initial value parameters ---
+class SettingsPanelContent extends StatefulWidget {
+  // RENAMED
+  // final AppTheme initialTheme;
+  // final double initialFontSize;
+  // final String initialFontFamily;
+  // final double initialLineSpacing;
+  // final MarginSize initialMarginSize;
+  // final EpubFlow initialEpubFlow;
+  // final EpubSpread initialEpubSpread;
+
+  const SettingsPanelContent({super.key}); // RENAMED & simplified constructor
+
+  @override
+  State<SettingsPanelContent> createState() => _SettingsPanelContentState(); // RENAMED
+}
+// --- END MODIFIED ---
+
+// RENAMED
+class _SettingsPanelContentState extends State<SettingsPanelContent> {
+  // --- REMOVED: Local state variables are no longer needed ---
+  // late AppTheme _currentTheme;
+  // late double _currentFontSize;
+  // late String _currentFontFamily;
+  // late double _currentLineSpacing;
+  // late MarginSize _currentMarginSize;
+  // late EpubFlow _currentEpubFlow;
+  // late EpubSpread _currentEpubSpread;
+  // --- END REMOVED ---
+
+  // --- REMOVED: initState no longer needed for these variables ---
+  // @override
+  // void initState() {
+  //   super.initState();
+  //   _currentTheme = widget.initialTheme;
+  //   _currentFontSize = widget.initialFontSize;
+  //   _currentFontFamily = widget.initialFontFamily;
+  //   _currentLineSpacing = widget.initialLineSpacing;
+  //   _currentMarginSize = widget.initialMarginSize;
+  //   _currentEpubFlow = widget.initialEpubFlow;
+  //   _currentEpubSpread = widget.initialEpubSpread;
+  // }
+  // --- END REMOVED ---
+
+  List<DropdownMenuItem<T>> _buildEnumDropdownItems<T extends Enum>(
+    List<T> enumValues,
+  ) {
+    return enumValues.map((T value) {
+      String name = value.name;
+      String titleCaseName =
+          name[0].toUpperCase() + name.substring(1).toLowerCase();
+      return DropdownMenuItem<T>(value: value, child: Text(titleCaseName));
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // --- MODIFIED: Read values directly from Provider using watch/select ---
+    // Using Provider.of(context) which listens by default (like watch)
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final settingsProvider = Provider.of<ReaderSettingsProvider>(context);
+
+    // Get current values from providers
+    final AppTheme currentTheme = themeProvider.currentTheme;
+    final double currentFontSize = settingsProvider.fontSize;
+    final String currentFontFamily = settingsProvider.fontFamily;
+    final double currentLineSpacing = settingsProvider.lineSpacing;
+    final MarginSize currentMarginSize = settingsProvider.marginSize;
+    final EpubFlow currentEpubFlow = settingsProvider.epubFlow;
+    final EpubSpread currentEpubSpread = settingsProvider.epubSpread;
+    // --- END MODIFIED ---
+
+    // RENAMED: SettingsPanelContentState
     return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Theme', style: Theme.of(context).textTheme.titleLarge),
-          DropdownButton<AppTheme>(
-            value: _currentTheme,
-            items: const [
-              DropdownMenuItem(value: AppTheme.light, child: Text('Light')),
-              DropdownMenuItem(value: AppTheme.dark, child: Text('Dark')),
-              DropdownMenuItem(value: AppTheme.sepia, child: Text('Sepia')),
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16.0),
+        child: Container(
+          color: Theme.of(context).scaffoldBackgroundColor, // Match background
+          child: ListView(
+            padding: const EdgeInsets.all(16.0), // Use const
+            shrinkWrap: true,
+            children: [
+              // Optional: Drag Handle Visual
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              Text('Theme', style: Theme.of(context).textTheme.titleLarge),
+              DropdownButton<AppTheme>(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentTheme,
+                // --- END MODIFIED ---
+                isExpanded: true,
+                items: _buildEnumDropdownItems(AppTheme.values),
+                onChanged: (value) {
+                  if (value != null) {
+                    // --- REMOVED: setState ---
+                    // setState(() {
+                    //   _currentTheme = value;
+                    // });
+                    // --- END REMOVED ---
+                    themeProvider.setTheme(
+                      value,
+                    ); // Call provider setter directly
+                  }
+                },
+              ),
+              const Divider(),
+              Text('Font', style: Theme.of(context).textTheme.titleLarge),
+              DropdownButton<String>(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentFontFamily,
+                // --- END MODIFIED ---
+                isExpanded: true,
+                items:
+                    settingsProvider.availableFontFamilies.map((font) {
+                      return DropdownMenuItem(value: font, child: Text(font));
+                    }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    // --- REMOVED: setState ---
+                    // setState(() {
+                    //   _currentFontFamily = value;
+                    // });
+                    // --- END REMOVED ---
+                    settingsProvider.setFontFamily(value);
+                  }
+                },
+              ),
+              const Divider(),
+              Text(
+                // --- MODIFIED: Use provider value for label ---
+                'Font Size (${currentFontSize.round()})',
+                // --- END MODIFIED ---
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Slider(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentFontSize,
+                // --- END MODIFIED ---
+                min: 10.0,
+                max: 30.0,
+                divisions: 20,
+                // --- MODIFIED: Use provider value for label ---
+                label: currentFontSize.round().toString(),
+                // --- END MODIFIED ---
+                onChanged: (value) {
+                  // --- MODIFIED: Update provider directly on change for visual feedback ---
+                  // This is okay for sliders where continuous feedback is nice.
+                  // We still call the setter on onChangeEnd for persistence.
+                  settingsProvider.setFontSize(value);
+                  // --- END MODIFIED ---
+                },
+                onChangeEnd: (value) {
+                  // Persistence happens here (already done in onChanged, but good practice)
+                  // settingsProvider.setFontSize(value);
+                },
+              ),
+              const Divider(),
+              Text(
+                // --- MODIFIED: Use provider value for label ---
+                'Line Spacing (${currentLineSpacing.toStringAsFixed(1)})',
+                // --- END MODIFIED ---
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Slider(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentLineSpacing,
+                // --- END MODIFIED ---
+                min: 1.0,
+                max: 2.5,
+                divisions: 15,
+                // --- MODIFIED: Use provider value for label ---
+                label: currentLineSpacing.toStringAsFixed(1),
+                // --- END MODIFIED ---
+                onChanged: (value) {
+                  // --- MODIFIED: Update provider directly ---
+                  settingsProvider.setLineSpacing(value);
+                  // --- END MODIFIED ---
+                },
+                onChangeEnd: (value) {
+                  // Persistence happens here (already done in onChanged)
+                  // settingsProvider.setLineSpacing(value);
+                },
+              ),
+              const Divider(),
+              Text(
+                'Page Margins',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              DropdownButton<MarginSize>(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentMarginSize,
+                // --- END MODIFIED ---
+                isExpanded: true,
+                items: _buildEnumDropdownItems(MarginSize.values),
+                onChanged: (value) {
+                  if (value != null) {
+                    // --- REMOVED: setState ---
+                    // setState(() {
+                    //   _currentMarginSize = value;
+                    // });
+                    // --- END REMOVED ---
+                    settingsProvider.setMarginSize(value);
+                  }
+                },
+              ),
+              const Divider(),
+              Text(
+                'Reading Mode (Flow)',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              DropdownButton<EpubFlow>(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentEpubFlow,
+                // --- END MODIFIED ---
+                isExpanded: true,
+                items: _buildEnumDropdownItems(EpubFlow.values),
+                onChanged: (value) {
+                  if (value != null) {
+                    // --- REMOVED: setState ---
+                    // setState(() {
+                    //   _currentEpubFlow = value;
+                    // });
+                    // --- END REMOVED ---
+                    settingsProvider.setEpubFlow(value);
+                  }
+                },
+              ),
+              const Divider(),
+              Text(
+                'Page Spread (Desktop)',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              DropdownButton<EpubSpread>(
+                // --- MODIFIED: Bind value to provider value ---
+                value: currentEpubSpread,
+                // --- END MODIFIED ---
+                isExpanded: true,
+                items: _buildEnumDropdownItems(EpubSpread.values),
+                onChanged: (value) {
+                  if (value != null) {
+                    // --- REMOVED: setState ---
+                    // setState(() {
+                    //   _currentEpubSpread = value;
+                    // });
+                    // --- END REMOVED ---
+                    settingsProvider.setEpubSpread(value);
+                  }
+                },
+              ),
             ],
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _currentTheme = value;
-                });
-                // Update provider immediately only when modal closes
-                themeProvider.setTheme(value); // Actually update provider here
-              }
-            },
           ),
-          const Divider(),
-          Text('Font', style: Theme.of(context).textTheme.titleLarge),
-          DropdownButton<String>(
-            value: _currentFontFamily,
-            items:
-                settingsProvider.availableFontFamilies.map((font) {
-                  return DropdownMenuItem(value: font, child: Text(font));
-                }).toList(),
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _currentFontFamily = value;
-                });
-                settingsProvider.setFontFamily(value); // Update provider here
-              }
-            },
-          ),
-          const Divider(),
-          Text(
-            'Font Size (${_currentFontSize.round()})',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          Slider(
-            value: _currentFontSize,
-            min: 10.0,
-            max: 30.0,
-            divisions: 20,
-            label: _currentFontSize.round().toString(),
-            onChanged: (value) {
-              setState(() {
-                _currentFontSize = value;
-              });
-            },
-            // Update provider only when interaction ends
-            onChangeEnd: (value) {
-              settingsProvider.setFontSize(value);
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
 }
+// --- END RENAMED ---
+
+// --- NEW: Toc Panel Content Widget ---
+class TocPanelContent extends StatelessWidget {
+  final List<Map<String, dynamic>> tocList;
+  final Function(String href) onItemTap;
+
+  const TocPanelContent({
+    super.key,
+    required this.tocList,
+    required this.onItemTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.zero,
+      // Use ClipRRect to ensure content respects rounded corners of parent Material
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16.0),
+        child: Container(
+          color: Theme.of(context).scaffoldBackgroundColor, // Match background
+          child: Column(
+            mainAxisSize: MainAxisSize.min, // Important for constrained height
+            children: [
+              // Optional: Drag Handle Visual
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(
+                  bottom: 8.0,
+                  left: 16.0,
+                  right: 16.0,
+                ),
+                child: Text(
+                  "Table of Contents",
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              // Use Flexible + ListView for scrollable content within constraints
+              Flexible(
+                child: ListView.builder(
+                  padding: EdgeInsets.zero, // Explicitly add zero padding
+                  shrinkWrap: true, // Important for Flexible
+                  itemCount: tocList.length,
+                  itemBuilder: (context, index) {
+                    final item = tocList[index];
+                    final String label = item['label'] ?? 'Untitled';
+                    final String? href = item['href'];
+                    final int depth = item['depth'] ?? 0;
+
+                    return ListTile(
+                      contentPadding: EdgeInsets.only(
+                        left: 16.0 + (depth * 16.0),
+                        right: 16.0,
+                      ), // Indentation
+                      title: Text(
+                        label,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      dense: true,
+                      onTap:
+                          href == null
+                              ? null
+                              : () {
+                                print("ToC Navigating to: $href");
+                                onItemTap(href);
+                              },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// --- END NEW ---

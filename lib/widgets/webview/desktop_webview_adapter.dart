@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_cef/webview_cef.dart';
-import './platform_webview_interface.dart';
+import 'platform_webview_interface.dart';
 
 /// Desktop implementation using webview_cef, adapted from the package example.
 class DesktopWebViewAdapter implements PlatformWebViewInterface {
