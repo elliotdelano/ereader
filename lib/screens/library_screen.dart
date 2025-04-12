@@ -473,44 +473,86 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ],
         ],
       ),
-      trailing: PopupMenuButton<String>(
-        itemBuilder:
-            (context) => [
-              const PopupMenuItem(value: 'edit', child: Text('Edit')),
-              const PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
-        onSelected: (value) async {
-          if (value == 'edit') {
-            await showModalBottomSheet<bool?>(
-              context: context,
-              isScrollControlled: true,
-              useSafeArea: true,
-              builder:
-                  (context) => Padding(
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.of(context).viewInsets.bottom,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.mode_edit_outline_rounded),
+            tooltip: 'Edit Book Info',
+            onPressed: () async {
+              await showModalBottomSheet<bool?>(
+                context: context,
+                isScrollControlled: true,
+                useSafeArea: true,
+                builder:
+                    (context) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: MediaQuery.of(context).viewInsets.bottom,
+                      ),
+                      child: BookEditSheet(
+                        book: book,
+                        onBookUpdated: (updatedBook) {
+                          final originalIndex = _books.indexWhere(
+                            (b) => b.path == updatedBook.path,
+                          );
+                          if (originalIndex != -1) {
+                            setState(() {
+                              _books[originalIndex] = updatedBook;
+                              _processAndSortBooks();
+                            });
+                          }
+                        },
+                      ),
                     ),
-                    child: BookEditSheet(
-                      book: book,
-                      onBookUpdated: (updatedBook) {
-                        final originalIndex = _books.indexWhere(
-                          (b) => b.path == updatedBook.path,
-                        );
-                        if (originalIndex != -1) {
-                          setState(() {
-                            _books[originalIndex] = updatedBook;
-                            _processAndSortBooks();
-                          });
-                        }
-                      },
+              );
+              await _loadBooks();
+            },
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.delete_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            tooltip: 'Delete Book',
+            onPressed: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (BuildContext context) {
+                  return AlertDialog(
+                    title: const Text('Delete Book?'),
+                    content: Text(
+                      'Are you sure you want to delete "${book.title}"?\n(This action cannot be undone)',
+                    ),
+                    actions: <Widget>[
+                      TextButton(
+                        child: const Text('Cancel'),
+                        onPressed: () => Navigator.of(context).pop(false),
+                      ),
+                      TextButton(
+                        child: const Text('Delete'),
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              );
+
+              if (confirm == true && mounted) {
+                print("TODO: Delete book at path: ${book.path}");
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Deletion for "${book.title}" not yet implemented.',
                     ),
                   ),
-            );
-            await _loadBooks();
-          } else if (value == 'delete') {
-            // Handle delete
-          }
-        },
+                );
+              }
+            },
+          ),
+        ],
       ),
       onTap: () async {
         await Navigator.push(

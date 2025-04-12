@@ -64,6 +64,7 @@ dependencies:
     # Add flex_color_scheme
     flex_color_scheme: ^8.2.0 # Or latest stable version
     flex_color_picker: ^3.7.0
+    package_info_plus: ^8.3.0
 
 dev_dependencies:
     flutter_test:
