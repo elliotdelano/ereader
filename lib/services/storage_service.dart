@@ -1,6 +1,8 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../screens/library_screen.dart';
+import '../models/book.dart';
+import '../models/custom_theme.dart';
 
 class StorageService {
   static const String _folderPathKey = 'selectedFolderPath';
@@ -65,7 +67,7 @@ class StorageService {
   static const String _sortDirectionKey = 'librarySortAscending';
 
   // --- Currently Reading --- NEW SECTION
-  static const String _currentlyReadingKey = 'currentlyReadingBooks';
+  static const String _currentlyReadingKey = 'currentlyReading';
 
   // Save the set of currently reading book paths
   Future<void> saveCurrentlyReading(Set<String> paths) async {
@@ -134,4 +136,54 @@ class StorageService {
       return (SortOption.title, true);
     }
   }
+
+  // --- NEW: Custom Theme Storage ---
+
+  /// Saves the list of custom themes to SharedPreferences.
+  Future<void> saveCustomThemes(List<CustomTheme> themes) async {
+    final prefs = await SharedPreferences.getInstance();
+    // Convert each theme to its JSON representation
+    final List<Map<String, dynamic>> themesJsonList =
+        themes.map((theme) => theme.toJson()).toList();
+    // Encode the entire list of maps into a single JSON string
+    final String themesJsonString = jsonEncode(themesJsonList);
+    await prefs.setString(_customThemesKey, themesJsonString);
+    print("Saved ${themes.length} custom themes.");
+  }
+
+  /// Loads the list of custom themes from SharedPreferences.
+  Future<List<CustomTheme>> loadCustomThemes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? themesJsonString = prefs.getString(_customThemesKey);
+
+    if (themesJsonString == null || themesJsonString.isEmpty) {
+      print("No custom themes found in storage.");
+      return []; // Return empty list if no themes are saved
+    }
+
+    try {
+      // Decode the JSON string into a List<dynamic> (which should be List<Map<String, dynamic>>)
+      final List<dynamic> themesJsonList = jsonDecode(themesJsonString);
+      // Convert each map back into a CustomTheme object
+      final List<CustomTheme> themes =
+          themesJsonList
+              .map((json) => CustomTheme.fromJson(json as Map<String, dynamic>))
+              .toList();
+      print("Loaded ${themes.length} custom themes.");
+      return themes;
+    } catch (e) {
+      print("Error loading/decoding custom themes: $e");
+      // Optionally clear the invalid data
+      // await prefs.remove(_customThemesKey);
+      return []; // Return empty list on error
+    }
+  }
+
+  // --- END NEW ---
+
+  // --- NEW: Key for Custom Themes ---
+  static const String _customThemesKey = 'customThemes';
+  // --- END NEW ---
+
+  // Load the list of books
 }

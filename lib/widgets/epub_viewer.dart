@@ -68,7 +68,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   // Store previous settings to detect changes
   double? _previousFontSize;
   String? _previousFontFamily;
-  AppTheme? _previousAppTheme;
+  String? _previousSelectedThemeId; // Added to track theme ID changes
   EpubFlow? _previousEpubFlow;
   EpubSpread? _previousEpubSpread;
   // --- NEW: Previous Line Spacing / Margin State ---
@@ -397,7 +397,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
     final currentFontSize = settingsProvider.fontSize;
     final currentFontFamily = settingsProvider.fontFamily;
-    final currentTheme = themeProvider.currentTheme;
+    final currentSelectedThemeId =
+        themeProvider.selectedThemeId; // Get current theme ID
     final currentEpubFlow = settingsProvider.epubFlow;
     final currentEpubSpread = settingsProvider.epubSpread;
     // --- NEW: Get current spacing/margins ---
@@ -415,7 +416,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     // Check if it's the first run (any previous value is null)
     if (_previousFontSize == null ||
         _previousFontFamily == null ||
-        _previousAppTheme == null ||
+        _previousSelectedThemeId == null || // Check previous theme ID
         _previousEpubFlow == null ||
         _previousEpubSpread == null ||
         // --- NEW: Check previous spacing/margins ---
@@ -428,7 +429,9 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       // Compare current values with previous ones
       if (_previousFontSize != currentFontSize) changed = true;
       if (_previousFontFamily != currentFontFamily) changed = true;
-      if (_previousAppTheme != currentTheme) changed = true;
+      if (_previousSelectedThemeId != currentSelectedThemeId) {
+        changed = true; // Check theme ID change
+      }
       if (_previousEpubFlow != currentEpubFlow) {
         changed = true;
         flowOrSpreadChanged = true;
@@ -458,7 +461,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         // Store ALL new settings BEFORE reloading
         _previousFontSize = currentFontSize;
         _previousFontFamily = currentFontFamily;
-        _previousAppTheme = currentTheme;
+        _previousSelectedThemeId = currentSelectedThemeId; // Store theme ID
         _previousEpubFlow = currentEpubFlow;
         _previousEpubSpread = currentEpubSpread;
         _previousLineSpacing = currentLineSpacing;
@@ -477,7 +480,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       // Store ALL current settings for next check
       _previousFontSize = currentFontSize;
       _previousFontFamily = currentFontFamily;
-      _previousAppTheme = currentTheme;
+      _previousSelectedThemeId = currentSelectedThemeId; // Store theme ID
       _previousEpubFlow = currentEpubFlow;
       _previousEpubSpread = currentEpubSpread;
       // --- NEW: Store current spacing/margins ---
@@ -495,18 +498,17 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       context,
       listen: false,
     );
-    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    // Removed themeProvider fetch here, done in _getThemeBaseStyles
 
-    final currentTheme = themeProvider.currentTheme;
+    // Removed final currentTheme = themeProvider.currentTheme;
     final currentFontFamily = settingsProvider.fontFamily;
-    // --- NEW: Get Line Spacing & Margins ---
+    // --- NEW: Get Line Spacing & Margins --- (Still needed here for passing)
     final currentLineSpacing = settingsProvider.lineSpacing;
     final currentMarginSize = settingsProvider.marginSize;
     // --- END NEW ---
 
-    // 1. Build the base theme styles
+    // 1. Build the base theme styles (pass necessary non-theme settings)
     Map<String, dynamic> styles = _getThemeBaseStyles(
-      currentTheme,
       currentLineSpacing,
       currentMarginSize,
     );
@@ -526,7 +528,7 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         'applyStyles($stylesJson);',
       );
       print(
-        "Applied base styles: Theme=${currentTheme.name}, Family=$currentFontFamily",
+        "Applied base styles: Family=$currentFontFamily (Theme applied based on ThemeProvider)",
       );
     } catch (e) {
       print("Error applying base styles/family: $e");
@@ -555,7 +557,6 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   Map<String, dynamic> _getThemeBaseStyles(
-    AppTheme theme,
     double lineSpacing,
     MarginSize marginSize,
   ) {
@@ -740,31 +741,6 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         ),
       );
     }
-
-    final themeProviderRead =
-        context
-            .read<
-              ThemeProvider
-            >(); // Use read here if only needed for color value
-    final bool isDark = themeProviderRead.currentTheme == AppTheme.dark;
-    final double screenWidth = MediaQuery.of(context).size.width;
-
-    // Progress bar colors
-    final Color lineBackgroundColor =
-        isDark ? Colors.grey.shade800 : Colors.grey.shade300;
-    final Color indicatorColor =
-        isDark ? Colors.grey.shade800 : Colors.grey.shade300;
-
-    // Slider Theme
-    final sliderTheme = SliderTheme.of(context).copyWith(
-      trackHeight: 2.0,
-      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
-      overlayShape: const RoundSliderOverlayShape(overlayRadius: 12.0),
-      activeTrackColor: Theme.of(context).colorScheme.primary,
-      inactiveTrackColor: lineBackgroundColor,
-      thumbColor: Theme.of(context).colorScheme.primary,
-      overlayColor: Theme.of(context).colorScheme.primary.withAlpha(60),
-    );
 
     return Stack(children: [_buildPlatformWebView()]);
   }

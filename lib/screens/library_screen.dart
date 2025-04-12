@@ -6,6 +6,7 @@ import '../services/storage_service.dart';
 import '../widgets/book_edit_sheet.dart';
 import 'reader_screen.dart';
 import '../widgets/book_search_delegate.dart';
+import '../widgets/app_drawer.dart';
 
 enum SortOption { title, author, dateAdded, lastModified, series }
 
@@ -231,6 +232,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return Scaffold(
       backgroundColor: defaultItemColor,
       appBar: AppBar(
+        leading: Builder(
+          builder: (BuildContext context) {
+            return IconButton(
+              icon: const Icon(Icons.menu),
+              tooltip: 'Open Menu',
+              onPressed: () {
+                Scaffold.of(context).openDrawer();
+              },
+            );
+          },
+        ),
         title: const Text('Library'),
         actions: [
           PopupMenuButton<SortOption>(
@@ -312,6 +324,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ],
       ),
+      drawer: const AppDrawer(),
       body:
           _isLoading
               ? const Center(child: CircularProgressIndicator())

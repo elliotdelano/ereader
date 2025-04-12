@@ -8,6 +8,7 @@ import 'providers/library_provider.dart';
 import 'providers/reader_settings_provider.dart';
 import 'providers/reader_state_provider.dart';
 import 'screens/library_screen.dart';
+import 'screens/theme_builder_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,7 +44,11 @@ class EReaderApp extends StatelessWidget {
           title: 'Ebook Reader',
           theme: themeProvider.themeData,
           debugShowCheckedModeBanner: false,
-          home: const LibraryScreen(),
+          initialRoute: '/library',
+          routes: {
+            '/library': (context) => const LibraryScreen(),
+            '/theme-builder': (context) => const ThemeBuilderScreen(),
+          },
         );
       },
     );

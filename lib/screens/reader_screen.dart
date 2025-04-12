@@ -235,7 +235,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final topPadding = MediaQuery.of(context).padding.top;
 
     // Determine Status Bar Style based on Theme
-    final bool isDarkMode = themeProvider.currentTheme == AppTheme.dark;
+    final bool isDarkMode =
+        themeProvider.themeData.brightness == Brightness.dark;
     final SystemUiOverlayStyle overlayStyle = SystemUiOverlayStyle(
       statusBarColor:
           Theme.of(context)
@@ -722,7 +723,8 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
     final settingsProvider = Provider.of<ReaderSettingsProvider>(context);
 
     // Get current values from providers
-    final AppTheme currentTheme = themeProvider.currentTheme;
+    // Removed AppTheme currentTheme = themeProvider.currentTheme;
+    final String selectedThemeId = themeProvider.selectedThemeId;
     final double currentFontSize = settingsProvider.fontSize;
     final String currentFontFamily = settingsProvider.fontFamily;
     final double currentLineSpacing = settingsProvider.lineSpacing;
@@ -757,22 +759,37 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                 ),
               ),
               Text('Theme', style: Theme.of(context).textTheme.titleLarge),
-              DropdownButton<AppTheme>(
-                // --- MODIFIED: Bind value to provider value ---
-                value: currentTheme,
-                // --- END MODIFIED ---
+              // Updated DropdownButton for Theme selection
+              DropdownButton<String>(
+                value: selectedThemeId, // Use the selected theme ID
                 isExpanded: true,
-                items: _buildEnumDropdownItems(AppTheme.values),
+                // Combine predefined and custom themes into dropdown items
+                items: [
+                  // Predefined Themes
+                  const DropdownMenuItem<String>(
+                    value: lightThemeId,
+                    child: Text('Light'),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: darkThemeId,
+                    child: Text('Dark'),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: sepiaThemeId,
+                    child: Text('Sepia'),
+                  ),
+                  // Custom Themes
+                  ...themeProvider.customThemes.map((customTheme) {
+                    return DropdownMenuItem<String>(
+                      value: customTheme.id,
+                      child: Text(customTheme.name),
+                    );
+                  }),
+                ],
                 onChanged: (value) {
                   if (value != null) {
-                    // --- REMOVED: setState ---
-                    // setState(() {
-                    //   _currentTheme = value;
-                    // });
-                    // --- END REMOVED ---
-                    themeProvider.setTheme(
-                      value,
-                    ); // Call provider setter directly
+                    // Call selectTheme with the String ID
+                    themeProvider.selectTheme(value);
                   }
                 },
               ),
