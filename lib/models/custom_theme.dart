@@ -8,58 +8,64 @@ const _uuid = Uuid();
 class CustomTheme {
   final String id;
   final String name;
-  final Color primaryColor;
-  final Color backgroundColor;
-  final Color surfaceColor; // For cards, dialogs, etc.
-  final Color textColor; // Main text color on background/surface
+  final Color primaryColor; // Required seed color
+  final Color? secondaryColor; // Optional seed color
+  final Color? tertiaryColor; // Optional seed color
+  final Brightness brightness; // Explicit brightness
 
-  // Constructor requires all core colors
+  // Constructor requires primary, brightness, accepts optional secondary/tertiary
   CustomTheme({
-    String? id, // Allow providing an ID (for updates) or generate one
+    String? id,
     required this.name,
     required this.primaryColor,
-    required this.backgroundColor,
-    required this.surfaceColor,
-    required this.textColor,
-  }) : id = id ?? _uuid.v4(); // Generate v4 UUID if no ID is provided
+    this.secondaryColor,
+    this.tertiaryColor,
+    required this.brightness,
+  }) : id = id ?? _uuid.v4();
 
-  // Serialization to JSON Map (storing colors as int values)
+  // Serialization to JSON Map
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'name': name,
-      'primaryColor': primaryColor.value,
-      'backgroundColor': backgroundColor.value,
-      'surfaceColor': surfaceColor.value,
-      'textColor': textColor.value,
+      'primaryColor': primaryColor.toARGB32(),
+      'secondaryColor':
+          secondaryColor?.toARGB32(), // Store optional color value or null
+      'tertiaryColor':
+          tertiaryColor?.toARGB32(), // Store optional color value or null
+      'brightness': brightness == Brightness.dark ? 'dark' : 'light',
     };
   }
 
   // Deserialization from JSON Map
   factory CustomTheme.fromJson(Map<String, dynamic> json) {
-    // Add basic validation or default values if needed
     if (json['id'] == null ||
         json['name'] == null ||
         json['primaryColor'] == null ||
-        json['backgroundColor'] == null ||
-        json['surfaceColor'] == null ||
-        json['textColor'] == null) {
+        json['brightness'] == null) {
       throw FormatException(
         "Invalid JSON for CustomTheme: Missing required keys.",
       );
+    }
+
+    // Helper to safely decode optional colors
+    Color? decodeColor(dynamic value) {
+      return value == null ? null : Color(value as int);
     }
 
     return CustomTheme(
       id: json['id'] as String,
       name: json['name'] as String,
       primaryColor: Color(json['primaryColor'] as int),
-      backgroundColor: Color(json['backgroundColor'] as int),
-      surfaceColor: Color(json['surfaceColor'] as int),
-      textColor: Color(json['textColor'] as int),
+      secondaryColor: decodeColor(json['secondaryColor']),
+      tertiaryColor: decodeColor(json['tertiaryColor']),
+      brightness:
+          (json['brightness'] as String) == 'dark'
+              ? Brightness.dark
+              : Brightness.light,
     );
   }
 
-  // Optional: Implement equality operator and hashCode for comparisons
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -68,35 +74,41 @@ class CustomTheme {
           id == other.id &&
           name == other.name &&
           primaryColor == other.primaryColor &&
-          backgroundColor == other.backgroundColor &&
-          surfaceColor == other.surfaceColor &&
-          textColor == other.textColor;
+          secondaryColor == other.secondaryColor &&
+          tertiaryColor == other.tertiaryColor &&
+          brightness == other.brightness;
 
   @override
   int get hashCode =>
       id.hashCode ^
       name.hashCode ^
       primaryColor.hashCode ^
-      backgroundColor.hashCode ^
-      surfaceColor.hashCode ^
-      textColor.hashCode;
+      secondaryColor.hashCode ^
+      tertiaryColor.hashCode ^
+      brightness.hashCode;
 
-  // Optional: copyWith method for easier updates
   CustomTheme copyWith({
     String? id,
     String? name,
     Color? primaryColor,
-    Color? backgroundColor,
-    Color? surfaceColor,
-    Color? textColor,
+    // Use Object() as a sentinel for clearing optional fields
+    Object? secondaryColor = const Object(),
+    Object? tertiaryColor = const Object(),
+    Brightness? brightness,
   }) {
+    // Check if sentinel was passed to clear the field
+    final bool clearSecondary = identical(secondaryColor, const Object());
+    final bool clearTertiary = identical(tertiaryColor, const Object());
+
     return CustomTheme(
       id: id ?? this.id,
       name: name ?? this.name,
       primaryColor: primaryColor ?? this.primaryColor,
-      backgroundColor: backgroundColor ?? this.backgroundColor,
-      surfaceColor: surfaceColor ?? this.surfaceColor,
-      textColor: textColor ?? this.textColor,
+      secondaryColor:
+          clearSecondary ? this.secondaryColor : secondaryColor as Color?,
+      tertiaryColor:
+          clearTertiary ? this.tertiaryColor : tertiaryColor as Color?,
+      brightness: brightness ?? this.brightness,
     );
   }
 }

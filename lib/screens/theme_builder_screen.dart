@@ -40,9 +40,11 @@ class _ThemeBuilderScreenState extends State<ThemeBuilderScreen> {
           final themeItem = allThemes[index];
           String themeId;
           String themeName;
+          CustomTheme? customThemeData;
           bool isCustom = false;
 
           if (themeItem is CustomTheme) {
+            customThemeData = themeItem;
             themeId = themeItem.id;
             themeName = themeItem.name;
             isCustom = true;
@@ -56,98 +58,124 @@ class _ThemeBuilderScreenState extends State<ThemeBuilderScreen> {
           final bool isSelected = themeId == selectedThemeId;
 
           Widget? trailingWidget;
-          if (isCustom) {
-            // For custom themes, show Edit/Delete menu
-            // Replace PopupMenuButton with a Row of IconButtons
-            trailingWidget = Row(
-              mainAxisSize: MainAxisSize.min, // Prevent row taking full width
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.mode_edit_outline_rounded),
-                  tooltip: 'Edit Theme',
-                  onPressed: () {
-                    // Existing Edit Logic
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (context) => EditThemeScreen(
-                              themeToEdit:
-                                  themeItem as CustomTheme, // Pass the theme
-                            ),
-                      ),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: Icon(
-                    Icons.delete_outline,
-                    color: Theme.of(context).colorScheme.error,
+          Widget editButton = IconButton(
+            icon: const Icon(Icons.mode_edit_outline_rounded),
+            tooltip: 'Edit Theme',
+            onPressed: () {
+              // Navigate needs the actual CustomTheme object
+              if (customThemeData != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            EditThemeScreen(themeToEdit: customThemeData),
                   ),
-                  tooltip: 'Delete Theme',
-                  onPressed: () async {
-                    // Existing Delete Logic
-                    final confirm = await showDialog<bool>(
-                      context: context,
-                      builder: (BuildContext context) {
-                        return AlertDialog(
-                          title: const Text('Delete Theme?'),
-                          content: Text(
-                            'Are you sure you want to delete the "$themeName" theme?',
-                          ),
-                          actions: <Widget>[
-                            TextButton(
-                              child: const Text('Cancel'),
-                              onPressed: () => Navigator.of(context).pop(false),
-                            ),
-                            TextButton(
-                              child: const Text('Delete'),
-                              onPressed: () => Navigator.of(context).pop(true),
-                              style: TextButton.styleFrom(
-                                foregroundColor:
-                                    Theme.of(context).colorScheme.error,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    );
+                );
+              } else {
+                // Handle case where edit is somehow pressed on non-custom? (Shouldn't happen)
+                print("Error: Edit pressed for non-custom theme item.");
+              }
+            },
+          );
 
-                    if (confirm == true && mounted) {
-                      // Call themeProvider.deleteCustomTheme
-                      Provider.of<ThemeProvider>(
-                        context,
-                        listen: false,
-                      ).deleteCustomTheme(themeId);
-                      // Show a confirmation snackbar
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Theme "$themeName" deleted.')),
+          if (isCustom) {
+            if (isSelected) {
+              // Custom and Selected: Show Edit + Checkmark
+              trailingWidget = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  editButton,
+                  const SizedBox(width: 8), // Spacing
+                  const Icon(Icons.check_circle, color: Colors.green),
+                ],
+              );
+            } else {
+              // Custom and Not Selected: Show Edit + Delete
+              trailingWidget = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  editButton,
+                  IconButton(
+                    icon: Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    tooltip: 'Delete Theme',
+                    onPressed: () async {
+                      // Delete Confirmation Logic
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (BuildContext context) {
+                          return AlertDialog(
+                            title: const Text('Delete Theme?'),
+                            content: Text(
+                              'Are you sure you want to delete the "$themeName" theme?',
+                            ),
+                            actions: <Widget>[
+                              TextButton(
+                                child: const Text('Cancel'),
+                                onPressed:
+                                    () => Navigator.of(context).pop(false),
+                              ),
+                              TextButton(
+                                child: const Text('Delete'),
+                                onPressed:
+                                    () => Navigator.of(context).pop(true),
+                                style: TextButton.styleFrom(
+                                  foregroundColor:
+                                      Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       );
-                    }
-                  },
-                ),
-              ],
-            );
+
+                      if (confirm == true && mounted) {
+                        Provider.of<ThemeProvider>(
+                          context,
+                          listen: false,
+                        ).deleteCustomTheme(themeId);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Theme "$themeName" deleted.'),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              );
+            }
           } else if (isSelected) {
-            // For selected predefined themes, show checkmark
+            // Predefined and Selected: Show Checkmark
             trailingWidget = const Icon(
               Icons.check_circle,
               color: Colors.green,
             );
           }
-          // Otherwise (unselected predefined theme), trailing is null
+          // Predefined and Not Selected: trailingWidget remains null
 
-          return ListTile(
-            title: Text(themeName),
-            subtitle:
-                isCustom
-                    ? const Text('Custom Theme')
-                    : const Text('Predefined Theme'),
-            trailing: trailingWidget, // Use the determined trailing widget
-            onTap: () {
-              // Allow selecting any theme (predefined or custom)
-              themeProvider.selectTheme(themeId);
-            },
+          // Wrap ListTile in a Card for panel effect
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListTile(
+              title: Text(themeName),
+              subtitle:
+                  isCustom
+                      ? const Text('Custom Theme')
+                      : const Text('Predefined Theme'),
+              trailing: trailingWidget, // Use the determined trailing widget
+              onTap: () {
+                // Allow selecting any theme (predefined or custom)
+                themeProvider.selectTheme(themeId);
+              },
+            ),
           );
         },
       ),

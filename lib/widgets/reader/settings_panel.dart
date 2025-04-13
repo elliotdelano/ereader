@@ -41,7 +41,7 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16.0),
         child: Container(
-          color: Theme.of(context).scaffoldBackgroundColor,
+          // color: Theme.of(context).scaffoldBackgroundColor,
           // Use Column instead of ListView
           child: SingleChildScrollView(
             // Wrap content in SingleChildScrollView
@@ -71,7 +71,7 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                       labelText: 'Theme',
                       border: OutlineInputBorder(),
                     ),
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                    // dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(8.0),
                     value: selectedThemeId,
                     items: [
@@ -108,7 +108,7 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                       labelText: 'Font Family',
                       border: OutlineInputBorder(),
                     ),
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                    // dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(8.0),
                     value: currentFontFamily,
                     items:
@@ -158,7 +158,7 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                       labelText: 'Page Margins',
                       border: OutlineInputBorder(),
                     ),
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                    // dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(8.0),
                     value: currentMarginSize,
                     items: _buildEnumDropdownItems(MarginSize.values),
@@ -176,7 +176,7 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                       labelText: 'Reading Mode (Flow)',
                       border: OutlineInputBorder(),
                     ),
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                    // dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(8.0),
                     value: currentEpubFlow,
                     items: _buildEnumDropdownItems(EpubFlow.values),
@@ -194,8 +194,8 @@ class _SettingsPanelContentState extends State<SettingsPanelContent> {
                       labelText: 'Page Spread (Desktop)',
                       border: OutlineInputBorder(),
                     ),
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
 
+                    // dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(8.0),
                     value: currentEpubSpread,
                     items: _buildEnumDropdownItems(EpubSpread.values),

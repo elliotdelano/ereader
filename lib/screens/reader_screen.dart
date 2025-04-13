@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -25,7 +24,6 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   final StorageService _storageService = StorageService();
-  PdfViewerController? _pdfController;
   String? _initialCfi;
   bool _isLoadingProgress = true;
   bool _isAppBarVisible = false;
@@ -60,9 +58,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       overlays: [SystemUiOverlay.top],
     );
     _loadInitialData();
-    if (widget.book.format == BookFormat.pdf) {
-      _pdfController = PdfViewerController();
-    }
     _markAsCurrentlyReading();
     // For EPUB, we now use a custom EPUB viewer widget. No controller needed.
     // --- NEW: Request Focus ---
@@ -77,7 +72,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
-    _pdfController?.dispose(); // Dispose if it was created
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     // --- NEW: Dispose FocusNode ---
     _focusNode.dispose();
@@ -240,14 +234,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final bool isDarkMode =
         themeProvider.themeData.brightness == Brightness.dark;
     final SystemUiOverlayStyle overlayStyle = SystemUiOverlayStyle(
-      statusBarColor:
-          Theme.of(context)
-              .colorScheme
-              .surface, // Black background for dark mode, transparent otherwise
-      statusBarIconBrightness:
-          isDarkMode
-              ? Brightness.light
-              : Brightness.dark, // Light icons for dark mode, dark otherwise
+      // statusBarColor:
+      //     Theme.of(context)
+      //         .colorScheme
+      //         .surface, // Black background for dark mode, transparent otherwise
+      statusBarIconBrightness: themeProvider.themeData.brightness,
       systemStatusBarContrastEnforced: false,
     );
 
@@ -261,13 +252,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     // Calculate actual width, respecting max width and side padding (20px each side)
     final double actualPanelWidth = math.min(screenWidth - 40.0, panelMaxWidth);
-    // Calculate left offset to center the panel
+    // Calculate horizontal offset to center the panel
     final double panelLeftOffset = (screenWidth - actualPanelWidth) / 2.0;
 
-    // Position off-screen calculation (adjust if necessary)
-    final double panelHiddenPosition = -(panelMaxHeight + 50);
-    // Position on-screen (adjust vertical offset from bottom)
-    const double panelVisibleOffset = 20.0;
+    // Calculate vertical offset to center the panel (approximated)
+    // Note: This centers the *top* of the panel. We might need adjustment
+    // if the panel height varies significantly or if exact vertical centering is crucial.
+    final double panelTopOffset = (screenHeight - panelMaxHeight) / 2.0;
+
+    // Positions for animation
+    final double offScreenTop = -screenHeight; // Animate from top
+    final double onScreenTop = math.max(
+      panelTopOffset,
+      topPadding + 10,
+    ); // Ensure below status bar
+
     // --- END MODIFIED ---
 
     // --- MODIFIED: Wrap Scaffold with Focus and KeyboardListener ---
@@ -275,11 +274,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       focusNode: _focusNode,
       onKeyEvent: _handleKeyEvent,
       child: Scaffold(
-        backgroundColor: Theme.of(context).colorScheme.surface,
+        // backgroundColor: Theme.of(context).colorScheme.surface,
         body: Stack(
           children: [
             // Layer 1: Main reader content
             Padding(
+              // TODO: Add Container to handle background color
               padding: EdgeInsets.only(top: topPadding),
               child: _buildReaderView(settingsProvider),
             ),
@@ -334,14 +334,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
             ),
 
-            // Layer 5: Settings Panel
+            // Layer 5: Settings Panel - Animate from Top Center
             AnimatedPositioned(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
-              bottom:
-                  _isSettingsPanelVisible
-                      ? panelVisibleOffset
-                      : panelHiddenPosition,
+              top: _isSettingsPanelVisible ? onScreenTop : offScreenTop,
               left: panelLeftOffset,
               width: actualPanelWidth,
               child: Container(
@@ -354,12 +351,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
             ),
 
-            // Layer 6: ToC Panel
+            // Layer 6: ToC Panel - Animate from Top Center
             AnimatedPositioned(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
-              bottom:
-                  _isTocPanelVisible ? panelVisibleOffset : panelHiddenPosition,
+              top: _isTocPanelVisible ? onScreenTop : offScreenTop,
               left: panelLeftOffset,
               width: actualPanelWidth,
               child: Container(
@@ -393,9 +389,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     child: Container(
                       margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
                       decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surface.withAlpha(230),
+                        color: Theme.of(context).cardColor,
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withAlpha(30),
@@ -438,17 +432,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                   overlayShape: const RoundSliderOverlayShape(
                                     overlayRadius: 12.0,
                                   ),
-                                  activeTrackColor:
-                                      Theme.of(context).colorScheme.primary,
-                                  inactiveTrackColor: (isDarkMode
-                                          ? Colors.grey.shade800
-                                          : Colors.grey.shade300)
-                                      .withAlpha(150),
-                                  thumbColor:
-                                      Theme.of(context).colorScheme.primary,
-                                  overlayColor: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withAlpha(60),
                                 ),
                                 child: Slider(
                                   value: _sliderValue.clamp(0.0, 1.0),
@@ -526,8 +509,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         initialCfi: _initialCfi,
         onLocationChanged: _handleLocationUpdate,
       );
-    } else if (widget.book.format == BookFormat.pdf && _pdfController != null) {
-      return SfPdfViewer.asset(widget.book.path, controller: _pdfController);
     } else {
       return const Center(
         child: Text('Unsupported file format or error loading viewer.'),

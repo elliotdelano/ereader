@@ -222,15 +222,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final Color currentlyReadingColor = colorScheme.surfaceContainerHighest;
-    final Color defaultItemColor = colorScheme.surface;
+    // final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    // final Color currentlyReadingColor = colorScheme.surfaceContainerHighest;
+    // final Color defaultItemColor = colorScheme.surface;
 
     final List<Book> combinedList = [..._currentlyReadingBooks, ..._otherBooks];
     final int currentlyReadingCount = _currentlyReadingBooks.length;
 
     return Scaffold(
-      backgroundColor: defaultItemColor,
+      // backgroundColor: defaultItemColor,
       appBar: AppBar(
         leading: Builder(
           builder: (BuildContext context) {
@@ -374,7 +374,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        color: currentlyReadingColor,
+                        // color: currentlyReadingColor,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -415,7 +415,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
                       final book = _otherBooks[otherIndex];
                       return Container(
-                        color: defaultItemColor,
+                        // color: defaultItemColor,
                         child: _buildBookListItem(book, otherIndex, false),
                       );
                     }
@@ -430,10 +430,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     int index,
     bool partOfCurrentlyReadingList,
   ) {
-    final bool isActuallyCurrentlyReading = _currentlyReadingPaths.contains(
-      book.path,
-    );
-
     return ListTile(
       leading:
           book.coverImagePath != null && book.coverImagePath!.isNotEmpty
@@ -450,7 +446,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               )
               : _buildDefaultIcon(book),
-      title: Text(book.title),
+      title: Text(book.title, overflow: TextOverflow.ellipsis, maxLines: 1),
       isThreeLine:
           book.readingPercentage != null && book.readingPercentage! > 0.01,
       subtitle: Column(
@@ -463,11 +459,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             LinearProgressIndicator(
               value: book.readingPercentage!,
               minHeight: 6,
-              backgroundColor:
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.primary,
-              ),
+              // backgroundColor:
+              //     Theme.of(context).colorScheme.surfaceContainerHighest,
+              // valueColor: AlwaysStoppedAnimation<Color>(
+              //   Theme.of(context).colorScheme.primary,
+              // ),
               borderRadius: BorderRadius.circular(4),
             ),
           ],
@@ -529,11 +525,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         onPressed: () => Navigator.of(context).pop(false),
                       ),
                       TextButton(
-                        child: const Text('Delete'),
                         onPressed: () => Navigator.of(context).pop(true),
                         style: TextButton.styleFrom(
                           foregroundColor: Theme.of(context).colorScheme.error,
                         ),
+                        child: const Text('Delete'),
                       ),
                     ],
                   );
@@ -569,12 +565,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       width: 40,
       height: 60,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer,
+        // color: Theme.of(context).colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Icon(
         book.format == BookFormat.epub ? Icons.book : Icons.picture_as_pdf,
-        color: Theme.of(context).colorScheme.onPrimaryContainer,
+        // color: Theme.of(context).colorScheme.onPrimaryContainer,
       ),
     );
   }

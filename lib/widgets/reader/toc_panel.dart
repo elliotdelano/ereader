@@ -17,44 +17,32 @@ class TocPanelContent extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.zero,
-      // Use ClipRRect to ensure content respects rounded corners of parent Material
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16.0),
         child: Container(
-          color: Theme.of(context).scaffoldBackgroundColor, // Match background
+          // Removed color, relying on Material wrapper in ReaderScreen
           child: Column(
-            mainAxisSize: MainAxisSize.min, // Important for constrained height
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment:
+                CrossAxisAlignment.stretch, // Match SettingsPanel
             children: [
-              // Optional: Drag Handle Visual
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Center(
-                  child: Container(
-                    width: 40,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[400],
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(
+              // Use Header similar to Settings Panel
+              const Padding(
+                padding: EdgeInsets.only(
+                  top: 16.0,
                   bottom: 8.0,
-                  left: 16.0,
-                  right: 16.0,
-                ),
+                ), // Adjusted padding
                 child: Text(
                   "Table of Contents",
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
                 ),
               ),
               // Use Flexible + ListView for scrollable content within constraints
               Flexible(
                 child: ListView.builder(
-                  padding: EdgeInsets.zero, // Explicitly add zero padding
-                  shrinkWrap: true, // Important for Flexible
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
                   itemCount: tocList.length,
                   itemBuilder: (context, index) {
                     final item = tocList[index];
@@ -66,7 +54,7 @@ class TocPanelContent extends StatelessWidget {
                       contentPadding: EdgeInsets.only(
                         left: 16.0 + (depth * 16.0),
                         right: 16.0,
-                      ), // Indentation
+                      ),
                       title: Text(
                         label,
                         style: Theme.of(context).textTheme.bodyMedium,
@@ -85,6 +73,7 @@ class TocPanelContent extends StatelessWidget {
                   },
                 ),
               ),
+              const SizedBox(height: 8), // Add padding at the bottom if needed
             ],
           ),
         ),

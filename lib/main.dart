@@ -14,10 +14,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    print("Initializing sqflite FFI for desktop...");
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
-    print("sqflite FFI initialized and factory set.");
   }
 
   runApp(

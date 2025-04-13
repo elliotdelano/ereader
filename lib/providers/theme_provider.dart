@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flex_color_scheme/flex_color_scheme.dart';
-import 'dart:convert';
 
 import '../services/storage_service.dart';
 import '../models/custom_theme.dart';
@@ -35,12 +34,12 @@ class ThemeProvider with ChangeNotifier {
   // --- Predefined Theme Data Generation (Using FlexColorScheme) ---
   static final ThemeData lightTheme = FlexThemeData.light(
     scheme: FlexScheme.material,
-    surfaceMode: FlexSurfaceMode.levelSurfacesLowScaffold,
+    surfaceMode: FlexSurfaceMode.highBackgroundLowScaffold,
     blendLevel: 7,
+    appBarStyle: FlexAppBarStyle.scaffoldBackground,
     subThemesData: const FlexSubThemesData(
       blendOnLevel: 10,
       blendOnColors: false,
-      useTextTheme: true,
       useM2StyleDividerInM3: true,
     ),
     visualDensity: FlexColorScheme.comfortablePlatformDensity,
@@ -50,11 +49,11 @@ class ThemeProvider with ChangeNotifier {
 
   static final ThemeData darkTheme = FlexThemeData.dark(
     scheme: FlexScheme.material,
-    surfaceMode: FlexSurfaceMode.levelSurfacesLowScaffold,
+    surfaceMode: FlexSurfaceMode.highBackgroundLowScaffold,
     blendLevel: 13,
+    appBarStyle: FlexAppBarStyle.scaffoldBackground,
     subThemesData: const FlexSubThemesData(
       blendOnLevel: 20,
-      useTextTheme: true,
       useM2StyleDividerInM3: true,
     ),
     visualDensity: FlexColorScheme.comfortablePlatformDensity,
@@ -76,11 +75,68 @@ class ThemeProvider with ChangeNotifier {
       error: Color(0xffcf6679),
     ),
     surface: const Color(0xFFF5F0E8), // Sepia background
+    surfaceMode: FlexSurfaceMode.highBackgroundLowScaffold,
+    blendLevel: 40,
     scaffoldBackground: const Color(0xFFFAF5ED), // Slightly lighter scaffold
+    appBarStyle: FlexAppBarStyle.scaffoldBackground,
     subThemesData: const FlexSubThemesData(
-      useTextTheme: true,
-      blendOnLevel: 10,
+      interactionEffects: true,
+      tintedDisabledControls: true,
+      blendOnLevel: 30,
       useM2StyleDividerInM3: true,
+      adaptiveElevationShadowsBack: FlexAdaptive.excludeWebAndroidFuchsia(),
+      adaptiveAppBarScrollUnderOff: FlexAdaptive.excludeWebAndroidFuchsia(),
+      adaptiveRadius: FlexAdaptive.excludeWebAndroidFuchsia(),
+      defaultRadiusAdaptive: 10.0,
+      elevatedButtonSchemeColor: SchemeColor.onPrimaryContainer,
+      elevatedButtonSecondarySchemeColor: SchemeColor.primaryContainer,
+      outlinedButtonOutlineSchemeColor: SchemeColor.primary,
+      toggleButtonsBorderSchemeColor: SchemeColor.primary,
+      segmentedButtonSchemeColor: SchemeColor.primary,
+      segmentedButtonBorderSchemeColor: SchemeColor.primary,
+      unselectedToggleIsColored: true,
+      sliderValueTinted: true,
+      inputDecoratorSchemeColor: SchemeColor.primary,
+      inputDecoratorIsFilled: true,
+      inputDecoratorBackgroundAlpha: 19,
+      inputDecoratorBorderType: FlexInputBorderType.outline,
+      inputDecoratorUnfocusedHasBorder: false,
+      inputDecoratorFocusedBorderWidth: 1.0,
+      inputDecoratorPrefixIconSchemeColor: SchemeColor.primary,
+      fabUseShape: true,
+      fabAlwaysCircular: true,
+      fabSchemeColor: SchemeColor.tertiary,
+      cardRadius: 14.0,
+      popupMenuRadius: 6.0,
+      popupMenuElevation: 3.0,
+      alignedDropdown: true,
+      dialogRadius: 18.0,
+      appBarScrolledUnderElevation: 1.0,
+      drawerElevation: 1.0,
+      drawerIndicatorSchemeColor: SchemeColor.primary,
+      bottomSheetRadius: 18.0,
+      bottomSheetElevation: 2.0,
+      bottomSheetModalElevation: 4.0,
+      bottomNavigationBarMutedUnselectedLabel: false,
+      bottomNavigationBarMutedUnselectedIcon: false,
+      menuRadius: 6.0,
+      menuElevation: 3.0,
+      menuBarRadius: 0.0,
+      menuBarElevation: 1.0,
+      menuBarShadowColor: Color(0x00000000),
+      searchBarElevation: 4.0,
+      searchViewElevation: 4.0,
+      searchUseGlobalShape: true,
+      navigationBarSelectedLabelSchemeColor: SchemeColor.primary,
+      navigationBarSelectedIconSchemeColor: SchemeColor.onPrimary,
+      navigationBarIndicatorSchemeColor: SchemeColor.primary,
+      navigationBarElevation: 1.0,
+      navigationRailSelectedLabelSchemeColor: SchemeColor.primary,
+      navigationRailSelectedIconSchemeColor: SchemeColor.onPrimary,
+      navigationRailUseIndicator: true,
+      navigationRailIndicatorSchemeColor: SchemeColor.primary,
+      navigationRailIndicatorOpacity: 1.00,
+      navigationRailBackgroundSchemeColor: SchemeColor.surface,
     ),
     keyColors: const FlexKeyColors(),
     visualDensity: FlexColorScheme.comfortablePlatformDensity,
@@ -177,77 +233,188 @@ class ThemeProvider with ChangeNotifier {
     print(
       "Generating theme data for custom theme: ${theme.name} (${theme.id})",
     );
-    final Brightness brightness =
-        theme.backgroundColor.computeLuminance() > 0.5
-            ? Brightness.light
-            : Brightness.dark;
-    final bool isDark = brightness == Brightness.dark;
+    // Use brightness directly from theme object
+    final bool isDark = theme.brightness == Brightness.dark;
 
-    // Create FlexSchemeColor from the user's core choices
-    final FlexSchemeColor schemeColors = FlexSchemeColor.from(
-      primary: theme.primaryColor,
-      // Let FlexSchemeColor compute secondary/tertiary unless user picks them
-    );
-
-    final baseFlexTheme =
+    // Use seeds for theme generation
+    final FlexColorScheme flexScheme =
         isDark
-            ? FlexThemeData.dark(
-              colors: schemeColors,
-              surfaceMode: FlexSurfaceMode.levelSurfacesLowScaffold,
-              blendLevel: 13, // Default dark blend level
-              scaffoldBackground: theme.backgroundColor,
-              appBarBackground: theme.surfaceColor,
-              subThemesData: FlexSubThemesData(
-                blendOnLevel: 20,
-                useTextTheme: true,
+            ? FlexColorScheme.dark(
+              primary: theme.primaryColor,
+              secondary: theme.secondaryColor, // Use optional seed
+              tertiary: theme.tertiaryColor, // Use optional seed
+              // Keep other settings consistent with predefined dark theme
+              surfaceMode: FlexSurfaceMode.highBackgroundLowScaffold,
+              appBarStyle: FlexAppBarStyle.scaffoldBackground,
+              blendLevel: 40,
+              subThemesData: const FlexSubThemesData(
+                interactionEffects: true,
+                tintedDisabledControls: true,
+                blendOnLevel: 30,
                 useM2StyleDividerInM3: true,
+                adaptiveElevationShadowsBack:
+                    FlexAdaptive.excludeWebAndroidFuchsia(),
+                adaptiveAppBarScrollUnderOff:
+                    FlexAdaptive.excludeWebAndroidFuchsia(),
+                adaptiveRadius: FlexAdaptive.excludeWebAndroidFuchsia(),
+                defaultRadiusAdaptive: 10.0,
+                elevatedButtonSchemeColor: SchemeColor.onPrimaryContainer,
+                elevatedButtonSecondarySchemeColor:
+                    SchemeColor.primaryContainer,
+                outlinedButtonOutlineSchemeColor: SchemeColor.primary,
+                toggleButtonsBorderSchemeColor: SchemeColor.primary,
+                segmentedButtonSchemeColor: SchemeColor.primary,
+                segmentedButtonBorderSchemeColor: SchemeColor.primary,
+                unselectedToggleIsColored: true,
+                sliderValueTinted: true,
+                inputDecoratorSchemeColor: SchemeColor.primary,
+                inputDecoratorIsFilled: true,
+                inputDecoratorBackgroundAlpha: 19,
+                inputDecoratorBorderType: FlexInputBorderType.outline,
+                inputDecoratorUnfocusedHasBorder: false,
+                inputDecoratorFocusedBorderWidth: 1.0,
+                inputDecoratorPrefixIconSchemeColor: SchemeColor.primary,
+                fabUseShape: true,
+                fabAlwaysCircular: true,
+                fabSchemeColor: SchemeColor.tertiary,
+                cardRadius: 14.0,
+                popupMenuRadius: 6.0,
+                popupMenuElevation: 3.0,
+                alignedDropdown: true,
+                dialogRadius: 18.0,
+                appBarScrolledUnderElevation: 1.0,
+                drawerElevation: 1.0,
+                drawerIndicatorSchemeColor: SchemeColor.primary,
+                bottomSheetRadius: 18.0,
+                bottomSheetElevation: 2.0,
+                bottomSheetModalElevation: 4.0,
+                bottomNavigationBarMutedUnselectedLabel: false,
+                bottomNavigationBarMutedUnselectedIcon: false,
+                menuRadius: 6.0,
+                menuElevation: 3.0,
+                menuBarRadius: 0.0,
+                menuBarElevation: 1.0,
+                menuBarShadowColor: Color(0x00000000),
+                searchBarElevation: 4.0,
+                searchViewElevation: 4.0,
+                searchUseGlobalShape: true,
+                navigationBarSelectedLabelSchemeColor: SchemeColor.primary,
+                navigationBarSelectedIconSchemeColor: SchemeColor.onPrimary,
+                navigationBarIndicatorSchemeColor: SchemeColor.primary,
+                navigationBarElevation: 1.0,
+                navigationRailSelectedLabelSchemeColor: SchemeColor.primary,
+                navigationRailSelectedIconSchemeColor: SchemeColor.onPrimary,
+                navigationRailUseIndicator: true,
+                navigationRailIndicatorSchemeColor: SchemeColor.primary,
+                navigationRailIndicatorOpacity: 1.00,
+                navigationRailBackgroundSchemeColor: SchemeColor.surface,
               ),
               visualDensity: FlexColorScheme.comfortablePlatformDensity,
               useMaterial3: true,
               swapLegacyOnMaterial3: true,
             )
-            : FlexThemeData.light(
-              colors: schemeColors,
-              surfaceMode: FlexSurfaceMode.levelSurfacesLowScaffold,
-              blendLevel: 7, // Default light blend level
-              scaffoldBackground: theme.backgroundColor,
-              appBarBackground: theme.surfaceColor,
-              subThemesData: FlexSubThemesData(
-                blendOnLevel: 10,
-                useTextTheme: true,
+            : FlexColorScheme.light(
+              primary: theme.primaryColor,
+              secondary: theme.secondaryColor, // Use optional seed
+              tertiary: theme.tertiaryColor, // Use optional seed
+              // Keep other settings consistent with predefined light theme
+              surfaceMode: FlexSurfaceMode.highBackgroundLowScaffold,
+              appBarStyle: FlexAppBarStyle.scaffoldBackground,
+              blendLevel: 40,
+              subThemesData: const FlexSubThemesData(
+                interactionEffects: true,
+                tintedDisabledControls: true,
+                blendOnLevel: 30,
                 useM2StyleDividerInM3: true,
+                adaptiveElevationShadowsBack:
+                    FlexAdaptive.excludeWebAndroidFuchsia(),
+                adaptiveAppBarScrollUnderOff:
+                    FlexAdaptive.excludeWebAndroidFuchsia(),
+                adaptiveRadius: FlexAdaptive.excludeWebAndroidFuchsia(),
+                defaultRadiusAdaptive: 10.0,
+                elevatedButtonSchemeColor: SchemeColor.onPrimaryContainer,
+                elevatedButtonSecondarySchemeColor:
+                    SchemeColor.primaryContainer,
+                outlinedButtonOutlineSchemeColor: SchemeColor.primary,
+                toggleButtonsBorderSchemeColor: SchemeColor.primary,
+                segmentedButtonSchemeColor: SchemeColor.primary,
+                segmentedButtonBorderSchemeColor: SchemeColor.primary,
+                unselectedToggleIsColored: true,
+                sliderValueTinted: true,
+                inputDecoratorSchemeColor: SchemeColor.primary,
+                inputDecoratorIsFilled: true,
+                inputDecoratorBackgroundAlpha: 19,
+                inputDecoratorBorderType: FlexInputBorderType.outline,
+                inputDecoratorUnfocusedHasBorder: false,
+                inputDecoratorFocusedBorderWidth: 1.0,
+                inputDecoratorPrefixIconSchemeColor: SchemeColor.primary,
+                fabUseShape: true,
+                fabAlwaysCircular: true,
+                fabSchemeColor: SchemeColor.tertiary,
+                cardRadius: 14.0,
+                popupMenuRadius: 6.0,
+                popupMenuElevation: 3.0,
+                alignedDropdown: true,
+                dialogRadius: 18.0,
+                appBarScrolledUnderElevation: 1.0,
+                drawerElevation: 1.0,
+                drawerIndicatorSchemeColor: SchemeColor.primary,
+                bottomSheetRadius: 18.0,
+                bottomSheetElevation: 2.0,
+                bottomSheetModalElevation: 4.0,
+                bottomNavigationBarMutedUnselectedLabel: false,
+                bottomNavigationBarMutedUnselectedIcon: false,
+                menuRadius: 6.0,
+                menuElevation: 3.0,
+                menuBarRadius: 0.0,
+                menuBarElevation: 1.0,
+                menuBarShadowColor: Color(0x00000000),
+                searchBarElevation: 4.0,
+                searchViewElevation: 4.0,
+                searchUseGlobalShape: true,
+                navigationBarSelectedLabelSchemeColor: SchemeColor.primary,
+                navigationBarSelectedIconSchemeColor: SchemeColor.onPrimary,
+                navigationBarIndicatorSchemeColor: SchemeColor.primary,
+                navigationBarElevation: 1.0,
+                navigationRailSelectedLabelSchemeColor: SchemeColor.primary,
+                navigationRailSelectedIconSchemeColor: SchemeColor.onPrimary,
+                navigationRailUseIndicator: true,
+                navigationRailIndicatorSchemeColor: SchemeColor.primary,
+                navigationRailIndicatorOpacity: 1.00,
+                navigationRailBackgroundSchemeColor: SchemeColor.surface,
               ),
               visualDensity: FlexColorScheme.comfortablePlatformDensity,
               useMaterial3: true,
               swapLegacyOnMaterial3: true,
             );
 
-    // Apply further specific overrides
-    return baseFlexTheme.copyWith(
-      cardTheme: baseFlexTheme.cardTheme.copyWith(
-        color: theme.surfaceColor, // Explicitly set card color
-      ),
-      // Ensure text selection uses primary color for contrast
-      textSelectionTheme: TextSelectionThemeData(
-        cursorColor: theme.primaryColor,
-        selectionColor: theme.primaryColor.withAlpha(30),
-        selectionHandleColor: theme.primaryColor,
-      ),
-      // Apply the custom text color
-      textTheme: baseFlexTheme.textTheme.apply(
-        bodyColor:
-            theme
-                .textColor, // Color for body text (bodyLarge, bodyMedium, bodySmall)
-        displayColor:
-            theme.textColor, // Color for display text (displayLarge, etc.)
-        // You might want to explicitly set headlineColor, titleColor etc. if needed
-      ),
-      // Apply custom text color to icon themes as well for consistency
-      iconTheme: baseFlexTheme.iconTheme.copyWith(color: theme.textColor),
-      primaryIconTheme: baseFlexTheme.primaryIconTheme.copyWith(
-        color: theme.textColor,
-      ),
-    );
+    // Generate the ThemeData from the FlexColorScheme object
+    ThemeData generatedTheme = flexScheme.toTheme;
+
+    // Apply further specific overrides ONLY if necessary
+    // In a seed-based approach, try to rely on FlexColorScheme first.
+    // We still need the custom text color override if that was a specific requirement
+    // you wanted to keep, otherwise REMOVE this textTheme override.
+    // If you removed textColor from CustomTheme, you MUST remove this.
+    // generatedTheme = generatedTheme.copyWith(
+    //   textTheme: generatedTheme.textTheme.apply(
+    //     bodyColor: theme.textColor, // Apply the specific text color chosen
+    //     displayColor: theme.textColor,
+    //   ),
+    //   iconTheme: generatedTheme.iconTheme.copyWith(color: theme.textColor),
+    //   primaryIconTheme: generatedTheme.primaryIconTheme.copyWith(color: theme.textColor),
+    // );
+
+    // Return the generated (and potentially slightly adjusted) theme
+    return generatedTheme;
+
+    // ----- OLD CODE REMOVED -----
+    // final baseFlexTheme =
+    //     isDark
+    //         ? FlexThemeData.dark(...)
+    //         : FlexThemeData.light(...);
+    // return baseFlexTheme.copyWith(...);
+    // ----- END OLD CODE REMOVED -----
   }
 
   // --- Custom Theme Management ---
