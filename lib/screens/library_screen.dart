@@ -430,133 +430,147 @@ class _LibraryScreenState extends State<LibraryScreen> {
     int index,
     bool partOfCurrentlyReadingList,
   ) {
-    return ListTile(
-      leading:
-          book.coverImagePath != null && book.coverImagePath!.isNotEmpty
-              ? ClipRRect(
+    final bool isActive = book.active;
+    final double opacity = isActive ? 1.0 : 0.5;
+
+    return Opacity(
+      opacity: opacity,
+      child: ListTile(
+        enabled: isActive,
+        leading:
+            book.coverImagePath != null && book.coverImagePath!.isNotEmpty
+                ? ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.file(
+                    File(book.coverImagePath!),
+                    width: 40,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return _buildDefaultIcon(book);
+                    },
+                  ),
+                )
+                : _buildDefaultIcon(book),
+        title: Text(book.title, overflow: TextOverflow.ellipsis, maxLines: 1),
+        isThreeLine:
+            book.readingPercentage != null && book.readingPercentage! > 0.01,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(book.author ?? 'Unknown Author'),
+            if (book.readingPercentage != null &&
+                book.readingPercentage! > 0.01) ...[
+              const SizedBox(height: 4),
+              LinearProgressIndicator(
+                value: book.readingPercentage!,
+                minHeight: 6,
                 borderRadius: BorderRadius.circular(4),
-                child: Image.file(
-                  File(book.coverImagePath!),
-                  width: 40,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return _buildDefaultIcon(book);
+              ),
+            ],
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.mode_edit_outline_rounded),
+              tooltip: 'Edit Book Info',
+              onPressed: () async {
+                await showModalBottomSheet<bool?>(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  builder:
+                      (context) => Padding(
+                        padding: EdgeInsets.only(
+                          bottom: MediaQuery.of(context).viewInsets.bottom,
+                        ),
+                        child: BookEditSheet(
+                          book: book,
+                          onBookUpdated: (updatedBook) {
+                            final originalIndex = _books.indexWhere(
+                              (b) => b.path == updatedBook.path,
+                            );
+                            if (originalIndex != -1) {
+                              setState(() {
+                                _books[originalIndex] = updatedBook;
+                                _processAndSortBooks();
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                );
+                await _loadBooks();
+              },
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              tooltip: 'Delete Book',
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return AlertDialog(
+                      title: const Text('Delete Book?'),
+                      content: Text(
+                        'Are you sure you want to delete "${book.title}"?\n(This action cannot be undone)',
+                      ),
+                      actions: <Widget>[
+                        TextButton(
+                          child: const Text('Cancel'),
+                          onPressed: () => Navigator.of(context).pop(false),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: TextButton.styleFrom(
+                            foregroundColor:
+                                Theme.of(context).colorScheme.error,
+                          ),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    );
                   },
-                ),
-              )
-              : _buildDefaultIcon(book),
-      title: Text(book.title, overflow: TextOverflow.ellipsis, maxLines: 1),
-      isThreeLine:
-          book.readingPercentage != null && book.readingPercentage! > 0.01,
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(book.author ?? 'Unknown Author'),
-          if (book.readingPercentage != null &&
-              book.readingPercentage! > 0.01) ...[
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: book.readingPercentage!,
-              minHeight: 6,
-              // backgroundColor:
-              //     Theme.of(context).colorScheme.surfaceContainerHighest,
-              // valueColor: AlwaysStoppedAnimation<Color>(
-              //   Theme.of(context).colorScheme.primary,
-              // ),
-              borderRadius: BorderRadius.circular(4),
+                );
+
+                if (confirm == true && mounted) {
+                  print("TODO: Delete book at path: ${book.path}");
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Deletion for "${book.title}" not yet implemented.',
+                      ),
+                    ),
+                  );
+                }
+              },
             ),
           ],
-        ],
+        ),
+        onTap: () async {
+          if (isActive) {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => ReaderScreen(book: book)),
+            );
+            await _loadBooks();
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '${book.title} is unavailable (file missing or invalid).',
+                ),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        },
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.mode_edit_outline_rounded),
-            tooltip: 'Edit Book Info',
-            onPressed: () async {
-              await showModalBottomSheet<bool?>(
-                context: context,
-                isScrollControlled: true,
-                useSafeArea: true,
-                builder:
-                    (context) => Padding(
-                      padding: EdgeInsets.only(
-                        bottom: MediaQuery.of(context).viewInsets.bottom,
-                      ),
-                      child: BookEditSheet(
-                        book: book,
-                        onBookUpdated: (updatedBook) {
-                          final originalIndex = _books.indexWhere(
-                            (b) => b.path == updatedBook.path,
-                          );
-                          if (originalIndex != -1) {
-                            setState(() {
-                              _books[originalIndex] = updatedBook;
-                              _processAndSortBooks();
-                            });
-                          }
-                        },
-                      ),
-                    ),
-              );
-              await _loadBooks();
-            },
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.delete_outline,
-              color: Theme.of(context).colorScheme.error,
-            ),
-            tooltip: 'Delete Book',
-            onPressed: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (BuildContext context) {
-                  return AlertDialog(
-                    title: const Text('Delete Book?'),
-                    content: Text(
-                      'Are you sure you want to delete "${book.title}"?\n(This action cannot be undone)',
-                    ),
-                    actions: <Widget>[
-                      TextButton(
-                        child: const Text('Cancel'),
-                        onPressed: () => Navigator.of(context).pop(false),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Theme.of(context).colorScheme.error,
-                        ),
-                        child: const Text('Delete'),
-                      ),
-                    ],
-                  );
-                },
-              );
-
-              if (confirm == true && mounted) {
-                print("TODO: Delete book at path: ${book.path}");
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Deletion for "${book.title}" not yet implemented.',
-                    ),
-                  ),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      onTap: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => ReaderScreen(book: book)),
-        );
-        await _loadBooks();
-      },
     );
   }
 

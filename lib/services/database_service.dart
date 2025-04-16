@@ -20,7 +20,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'ereader.db');
     return await openDatabase(
       path,
-      version: 5, // Increment version for coverImagePath
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -38,15 +38,22 @@ class DatabaseService {
         lastModified TEXT NOT NULL,
         dateAdded TEXT NOT NULL,
         format TEXT NOT NULL,
-        readingPercentage REAL
+        readingPercentage REAL,
+        active INTEGER NOT NULL DEFAULT 1
       )
     ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 5) {
+    if (oldVersion < 8) {
       await db.delete('books');
-      print("Database upgraded to V5 (deleted books table)");
+      print("Database upgraded to V8 (deleted books table)");
+    }
+    if (oldVersion < 9) {
+      await db.execute('''
+        ALTER TABLE books ADD COLUMN active INTEGER NOT NULL DEFAULT 1
+      ''');
+      print("Database upgraded to V9 (added active column)");
     }
   }
 

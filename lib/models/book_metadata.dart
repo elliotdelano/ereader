@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 class BookMetadata {
   final int? id;
   final String path;
@@ -11,6 +9,7 @@ class BookMetadata {
   final DateTime dateAdded;
   final String format; // 'epub' or 'pdf'
   final double? readingPercentage;
+  final bool active;
 
   BookMetadata({
     this.id,
@@ -23,6 +22,7 @@ class BookMetadata {
     required this.dateAdded,
     required this.format,
     this.readingPercentage,
+    this.active = true,
   });
 
   // Convert a BookMetadata instance into a Map
@@ -38,6 +38,7 @@ class BookMetadata {
       'dateAdded': dateAdded.toIso8601String(),
       'format': format,
       'readingPercentage': readingPercentage,
+      'active': active ? 1 : 0,
     };
   }
 
@@ -54,6 +55,23 @@ class BookMetadata {
       dateAdded: DateTime.parse(map['dateAdded']),
       format: map['format'],
       readingPercentage: map['readingPercentage'] as double?,
+      active: map['active'] == 1,
+    );
+  }
+
+  BookMetadata copyWith({bool? active}) {
+    return BookMetadata(
+      id: id,
+      path: path,
+      title: title,
+      author: author,
+      series: series,
+      coverImagePath: coverImagePath,
+      lastModified: lastModified,
+      dateAdded: dateAdded,
+      format: format,
+      readingPercentage: readingPercentage,
+      active: active ?? this.active,
     );
   }
 }

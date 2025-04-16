@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:epubx/epubx.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,31 +15,42 @@ import 'dart:convert';
 class FileService {
   final DatabaseService _databaseService = DatabaseService();
 
+  Future<PermissionStatus> _requestLegacyStoragePermission() async {
+    var status = await Permission.storage.status;
+    if (!status.isGranted) {
+      return await Permission.storage.request();
+    }
+    return status;
+  }
+
+  Future<PermissionStatus> _requestManageExternalStoragePermission() async {
+    var status = await Permission.manageExternalStorage.status;
+    if (!status.isGranted) {
+      return await Permission.manageExternalStorage.request();
+    }
+    return status;
+  }
+
   // Pick a directory using file_picker
   Future<String?> pickDirectory() async {
     // Request permissions first (especially important on Android)
     // On Desktop, file_picker often handles this implicitly, but good practice.
     if (Platform.isAndroid) {
       var status = await Permission.manageExternalStorage.status;
-      if (!status.isGranted) {
-        status = await Permission.manageExternalStorage.request();
-        if (!status.isGranted) {
-          // Handle permission denial (e.g., show a message)
-          return null;
-        }
+      final deviceInfo = await DeviceInfoPlugin().androidInfo;
+      if (deviceInfo.version.sdkInt < 29) {
+        status = await _requestLegacyStoragePermission();
       } else {
+        status = await _requestManageExternalStoragePermission();
+      }
+      if (!status.isGranted) {
         print("Storage permission already granted."); // Log if already granted
       }
-      // Android 11+ might need manage external storage, but start with basic storage.
-      // Consider adding Permission.manageExternalStorage if needed, but it requires
-      // special declaration and user redirection to settings.
     } else {
       print(
         "Not on Android, skipping permission request.",
       ); // Log if not Android
     }
-    // On Linux, permissions are generally handled by system file picker.
-
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Select Ebook Folder',
@@ -63,48 +75,46 @@ class FileService {
         final coverImageContent = await epubBook.readCover();
         if (coverImageContent != null) {
           final rawBytes = coverImageContent.getBytes();
-          if (rawBytes != null) {
-            // Create an ImageData object from the raw RGBA pixels
-            final imageData = await ui.ImageDescriptor.raw(
-              await ui.ImmutableBuffer.fromUint8List(rawBytes),
-              width: coverImageContent.width,
-              height: coverImageContent.height,
-              pixelFormat: ui.PixelFormat.rgba8888,
-            );
+          // Create an ImageData object from the raw RGBA pixels
+          final imageData = ui.ImageDescriptor.raw(
+            await ui.ImmutableBuffer.fromUint8List(rawBytes),
+            width: coverImageContent.width,
+            height: coverImageContent.height,
+            pixelFormat: ui.PixelFormat.rgba8888,
+          );
 
-            // Convert to an Image object
-            final codec = await imageData.instantiateCodec();
-            final frame = await codec.getNextFrame();
+          // Convert to an Image object
+          final codec = await imageData.instantiateCodec();
+          final frame = await codec.getNextFrame();
 
-            // Convert the frame to a byte array in PNG format
-            final pngBytes = await frame.image.toByteData(
-              format: ui.ImageByteFormat.png,
-            );
-            if (pngBytes != null) {
-              // Get app docs directory
-              final docDir = await getApplicationDocumentsDirectory();
-              final coversDir = Directory(path.join(docDir.path, 'covers'));
-              if (!await coversDir.exists()) {
-                await coversDir.create(recursive: true);
-              }
-
-              // Generate filename from hash of book path
-              final bookPathBytes = utf8.encode(epubPath);
-              final digest = sha1.convert(bookPathBytes);
-              final filename = '${digest.toString()}.png';
-              final filePath = path.join(coversDir.path, filename);
-
-              // Save the image file
-              final imageFile = File(filePath);
-              await imageFile.writeAsBytes(pngBytes.buffer.asUint8List());
-              coverImagePath = filePath;
-              // print("Saved cover image to: $coverImagePath");
+          // Convert the frame to a byte array in PNG format
+          final pngBytes = await frame.image.toByteData(
+            format: ui.ImageByteFormat.png,
+          );
+          if (pngBytes != null) {
+            // Get app docs directory
+            final docDir = await getApplicationDocumentsDirectory();
+            final coversDir = Directory(path.join(docDir.path, 'covers'));
+            if (!await coversDir.exists()) {
+              await coversDir.create(recursive: true);
             }
 
-            // Clean up
-            frame.image.dispose();
-            codec.dispose();
+            // Generate filename from hash of book path
+            final bookPathBytes = utf8.encode(epubPath);
+            final digest = sha1.convert(bookPathBytes);
+            final filename = '${digest.toString()}.png';
+            final filePath = path.join(coversDir.path, filename);
+
+            // Save the image file
+            final imageFile = File(filePath);
+            await imageFile.writeAsBytes(pngBytes.buffer.asUint8List());
+            coverImagePath = filePath;
+            // print("Saved cover image to: $coverImagePath");
           }
+
+          // Clean up
+          frame.image.dispose();
+          codec.dispose();
         }
       } catch (e) {
         print("Error processing or saving cover image: $e");
@@ -120,6 +130,7 @@ class FileService {
         lastModified: File(epubPath).lastModifiedSync(),
         dateAdded: DateTime.now(),
         format: 'epub',
+        active: true,
       );
     } catch (e) {
       print("Error extracting EPUB metadata for $epubPath: $e");
@@ -139,6 +150,7 @@ class FileService {
         lastModified: File(path).lastModifiedSync(),
         dateAdded: DateTime.now(),
         format: 'pdf',
+        active: true,
       );
     } catch (e) {
       print("Error extracting PDF metadata: $e");
@@ -146,15 +158,30 @@ class FileService {
     }
   }
 
+  Future<List<Book>> getActiveBooks() async {
+    final books = await _databaseService.getAllBooks();
+
+    // For each book, check if the file still exists in the filesystem
+    // if not set its active status to false
+    for (final book in books) {
+      if (!File(book.path).existsSync()) {
+        await _databaseService.updateBook(book.copyWith(active: false));
+      }
+    }
+
+    return books.map((book) => Book.fromMetadata(book)).toList();
+  }
+
+  //TODO: redo scan to support multiple directories and individual files
   // Scan a directory recursively for supported book files
   Future<List<Book>> scanForBooks(String directoryPath) async {
-    final List<Book> books = [];
-    final List<String> existingPaths = [];
+    // final List<Book> books = [];
+    // final List<String> existingPaths = [];
     final directory = Directory(directoryPath);
 
     if (!await directory.exists()) {
       print("Directory does not exist: $directoryPath");
-      return books; // Return empty list if directory doesn't exist
+      return []; // Return empty list if directory doesn't exist
     }
 
     try {
@@ -166,7 +193,7 @@ class FileService {
         if (entity is File) {
           final format = Book.getFormatFromPath(entity.path);
           if (format != BookFormat.unknown) {
-            existingPaths.add(entity.path);
+            // existingPaths.add(entity.path);
 
             // Check if we already have this book in the database
             BookMetadata? existingMetadata = await _databaseService
@@ -211,38 +238,59 @@ class FileService {
             }
 
             // Create Book instance using the latest metadata (either existing or updated)
-            if (existingMetadata != null) {
-              books.add(Book.fromMetadata(existingMetadata));
-            } else {
-              print(
-                "Warning: Could not get metadata for ${entity.path}, creating Book with fallback title.",
-              );
-              books.add(
-                Book(
-                  path: entity.path,
-                  title: Book.getTitleFromPath(entity.path),
-                  format: format,
-                  lastModified: File(entity.path).lastModifiedSync(),
-                  dateAdded: DateTime.now(),
-                ),
-              );
-            }
+            // if (existingMetadata != null) {
+            //   books.add(Book.fromMetadata(existingMetadata));
+            // } else {
+            //   print(
+            //     "Warning: Could not get metadata for ${entity.path}, creating Book with fallback title.",
+            //   );
+            //   books.add(
+            //     Book(
+            //       path: entity.path,
+            //       title: Book.getTitleFromPath(entity.path),
+            //       format: format,
+            //       lastModified: File(entity.path).lastModifiedSync(),
+            //       dateAdded: DateTime.now(),
+            //     ),
+            //   );
+            // }
           }
         }
       }
 
-      // Remove books that no longer exist in the filesystem
-      final orphanedBooks = await _databaseService.getOrphanedBooks(
-        existingPaths,
-      );
-      for (final book in orphanedBooks) {
-        await _databaseService.deleteBook(book.path);
-      }
+      // Remove books that no longer exist in the filesystem - REMOVED LOGIC
+      // final orphanedBooks = await _databaseService.getOrphanedBooks(
+      //   existingPaths,
+      // );
+      // for (final book in orphanedBooks) {
+      //   await _databaseService.deleteBook(book.path);
+      // }
     } catch (e) {
       print("Error scanning directory: $e");
       // Depending on the error, you might want to return partial results or empty
     }
 
-    return books;
+    return getActiveBooks();
+  }
+
+  Future<Book?> retrieveSingleFile(String path) async {
+    final format = Book.getFormatFromPath(path);
+    if (format != BookFormat.epub) {
+      return null;
+    }
+
+    BookMetadata? metadata = await _databaseService.getBookByPath(path);
+    if (metadata == null) {
+      metadata = await _extractEpubMetadata(path);
+      if (metadata != null) {
+        await _databaseService.insertBook(metadata);
+      }
+    }
+
+    if (metadata == null) {
+      return null;
+    }
+
+    return Book.fromMetadata(metadata);
   }
 }

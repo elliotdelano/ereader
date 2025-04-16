@@ -1,4 +1,4 @@
-package com.example.ereader
+package com.delano.ereader
 
 import io.flutter.embedding.android.FlutterActivity
 

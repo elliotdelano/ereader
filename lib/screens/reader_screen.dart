@@ -630,10 +630,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // Only handle arrows if in paginated mode
       if (settingsProvider.epubFlow == EpubFlow.paginated) {
         if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          print("[Keyboard] Left Arrow Pressed");
+          // print("[Keyboard] Left Arrow Pressed");
           _epubViewerKey.currentState?.previousPage();
         } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-          print("[Keyboard] Right Arrow Pressed");
+          // print("[Keyboard] Right Arrow Pressed");
           _epubViewerKey.currentState?.nextPage();
         }
       }

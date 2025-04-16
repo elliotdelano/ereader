@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path/path.dart' as pathlib;
 import 'package:epubx/epubx.dart';
 import 'book_metadata.dart';
@@ -16,7 +15,7 @@ class Book {
   final DateTime dateAdded;
   final BookFormat format;
   final double? readingPercentage;
-
+  final bool active;
   Book({
     required this.path,
     required this.title,
@@ -27,6 +26,7 @@ class Book {
     required this.dateAdded,
     required this.format,
     this.readingPercentage,
+    this.active = true,
   });
 
   // Factory method to create a Book from a BookMetadata
@@ -41,6 +41,7 @@ class Book {
       dateAdded: metadata.dateAdded,
       format: metadata.format == 'epub' ? BookFormat.epub : BookFormat.pdf,
       readingPercentage: metadata.readingPercentage,
+      active: metadata.active,
     );
   }
 
@@ -91,10 +92,11 @@ class Book {
       lastModified: File(path).lastModifiedSync(),
       dateAdded: DateTime.now(),
       readingPercentage: null,
+      active: true,
     );
   }
 
-  Book copyWith({double? readingPercentage}) {
+  Book copyWith({double? readingPercentage, bool? active}) {
     return Book(
       path: path,
       title: title,
@@ -105,6 +107,7 @@ class Book {
       dateAdded: dateAdded,
       format: format,
       readingPercentage: readingPercentage ?? this.readingPercentage,
+      active: active ?? this.active,
     );
   }
 }
