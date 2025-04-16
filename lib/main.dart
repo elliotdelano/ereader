@@ -48,25 +48,24 @@ class EReaderApp extends StatefulWidget {
 }
 
 class _EReaderAppState extends State<EReaderApp> {
-  late StreamSubscription _intentDataStreamSubscription;
+  late StreamSubscription? _intentDataStreamSubscription;
   bool _isNavigating = false;
 
   @override
   void initState() {
     super.initState();
-    _initIntentHandling();
+    if (Platform.isAndroid || Platform.isIOS) {
+      _initIntentHandling();
+    }
   }
 
   @override
   void dispose() {
-    _intentDataStreamSubscription.cancel();
+    _intentDataStreamSubscription?.cancel();
     super.dispose();
   }
 
   void _initIntentHandling() {
-    // Use the singleton instance getter
-
-    // Listener for intents received while the app is running
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
         .getMediaStream()
         .listen(

@@ -90,17 +90,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   // --- END NEW ---
 
   Future<void> _showSettings() async {
-    // --- MODIFIED: Remove fetching initial values (not needed by panel) ---
-    // final settingsProvider = Provider.of<ReaderSettingsProvider>(
-    //   context,
-    //   listen: false,
-    // );
-    // final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
-    // final initialTheme = themeProvider.currentTheme;
-    // final initialFontSize = settingsProvider.fontSize;
-    // final initialFontFamily = settingsProvider.fontFamily;
-    // --- END MODIFIED ---
-
     // Toggle panel visibility
     setState(() {
       _isTocPanelVisible = false; // Close ToC if open
@@ -230,9 +219,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final topPadding = MediaQuery.of(context).padding.top;
 
-    // Determine Status Bar Style based on Theme
-    final bool isDarkMode =
-        themeProvider.themeData.brightness == Brightness.dark;
     final SystemUiOverlayStyle overlayStyle = SystemUiOverlayStyle(
       // statusBarColor:
       //     Theme.of(context)
@@ -286,44 +272,62 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
             // --- REVERTED: Use Three Gesture Detectors ---
             // Define zones for clarity
-            Positioned.fill(
-              top: topPadding, // Start below status bar area
-              child: Row(
-                children: [
-                  // Left Zone (Tap/Swipe)
-                  Expanded(
-                    flex: 35, // Corresponds to 35%
-                    child: GestureDetector(
-                      onTap: _handleLeftTap,
-                      onHorizontalDragEnd: _handleHorizontalSwipe,
-                      behavior: HitTestBehavior.opaque,
-                      child: Container(color: Colors.transparent), // Fill area
+            if (settingsProvider.epubFlow == EpubFlow.paginated)
+              Positioned.fill(
+                top: topPadding, // Start below status bar area
+                child: Row(
+                  children: [
+                    // Left Zone (Tap/Swipe)
+                    Expanded(
+                      flex: 35, // Corresponds to 35%
+                      child: GestureDetector(
+                        onTap: _handleLeftTap,
+                        onHorizontalDragEnd: _handleHorizontalSwipe,
+                        behavior: HitTestBehavior.translucent,
+                        child: Container(
+                          color: Colors.transparent,
+                        ), // Fill area
+                      ),
                     ),
-                  ),
-                  // Center Zone (Tap for AppBar only)
-                  Expanded(
-                    flex: 30, // Corresponds to 30%
-                    child: GestureDetector(
-                      onTap: _handleCenterTap,
-                      onHorizontalDragEnd: _handleHorizontalSwipe,
-                      behavior: HitTestBehavior.opaque,
-                      child: Container(color: Colors.transparent),
+                    // Center Zone (Tap for AppBar only)
+                    Expanded(
+                      flex: 30, // Corresponds to 30%
+                      child: GestureDetector(
+                        onTap: _handleCenterTap,
+                        onHorizontalDragEnd: _handleHorizontalSwipe,
+                        behavior: HitTestBehavior.translucent,
+                        child: Container(color: Colors.transparent),
+                      ),
                     ),
-                  ),
-                  // Right Zone (Tap/Swipe)
-                  Expanded(
-                    flex: 35, // Corresponds to 35%
-                    child: GestureDetector(
-                      onTap: _handleRightTap,
-                      onHorizontalDragEnd: _handleHorizontalSwipe,
-                      behavior: HitTestBehavior.opaque,
-                      child: Container(color: Colors.transparent),
+                    // Right Zone (Tap/Swipe)
+                    Expanded(
+                      flex: 35, // Corresponds to 35%
+                      child: GestureDetector(
+                        onTap: _handleRightTap,
+                        onHorizontalDragEnd: _handleHorizontalSwipe,
+                        behavior: HitTestBehavior.translucent,
+                        child: Container(color: Colors.transparent),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            // --- END REVERTED ---
+
+            if (settingsProvider.epubFlow == EpubFlow.scrolled)
+              Positioned.fill(
+                top: topPadding, // Start below status bar area
+                child: Column(
+                  children: [
+                    Expanded(
+                      flex: 30, // Corresponds to 30%
+                      child: GestureDetector(
+                        onTap: _handleCenterTap,
+                        behavior: HitTestBehavior.translucent,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // Layer 4: Dimming background for panels
             Visibility(
@@ -404,6 +408,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         children: [
                           AppBar(
                             backgroundColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                             elevation: 0,
                             title: Text(widget.book.title),
                             actions: [
@@ -583,14 +590,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   // NEW: Handle horizontal swipes for page turning
   void _handleHorizontalSwipe(DragEndDetails details) {
-    // --- NEW: Log swipe detection ---
-    print(
-      "[Gesture] _handleHorizontalSwipe fired with velocity ${details.primaryVelocity}",
-    );
-    // --- END NEW ---
     if (widget.book.format != BookFormat.epub) return; // Only for EPUBs
 
-    // --- NEW: Check flow mode before handling swipes ---
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
       listen: false,
@@ -598,7 +599,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (settingsProvider.epubFlow == EpubFlow.scrolled) {
       return; // Do nothing in scroll mode
     }
-    // --- END NEW ---
 
     // Velocity check to determine direction and intent
     // Adjust the threshold (e.g., 500) as needed for sensitivity

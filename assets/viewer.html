@@ -33,17 +33,11 @@
 		<style>
 			/* Basic styles to make viewer fill screen */
 			body {
-				display: flex;
 				justify-content: center;
 				align-items: center;
 				margin: 0; /* Remove default body margin */
-				overflow: hidden; /* Prevent body scrollbars */
+				overflow: hidden;
 			}
-			/* #viewer size will be set by renderTo options */
-			/* #viewer {
-				width: 100vw;
-				height: 100vh;
-			} */
 			/* Placeholder for theme styles injected via JS */
 		</style>
 	</head>
@@ -67,11 +61,11 @@
 				flow = "paginated",
 				spread = "none"
 			) {
-				console.log(
-					`Initializing Epub.js with OPF path: ${opfPath}, Width: ${width}, Height: ${height}`
-				);
-				console.log(`Flow: ${flow}, Spread: ${spread}`);
-				console.log("Received initial CFI:", initialCfi);
+				// console.log(
+				// 	`Initializing Epub.js with OPF path: ${opfPath}, Width: ${width}, Height: ${height}`
+				// );
+				// console.log(`Flow: ${flow}, Spread: ${spread}`);
+				// console.log("Received initial CFI:", initialCfi);
 
 				// Check if ePub is available
 				if (typeof ePub === "undefined") {
@@ -101,7 +95,7 @@
 
 				try {
 					window.epubBook = ePub(opfPath); // Use the provided OPF path
-					console.log("ePub book object created:", window.epubBook);
+					// console.log("ePub book object created:", window.epubBook);
 
 					// Create the rendition with proper configuration
 					window.epubRendition = window.epubBook.renderTo("viewer", {
@@ -113,31 +107,31 @@
 						manager: "continuous",
 						transition: "none",
 					});
-					console.log(
-						"Rendition object created:",
-						window.epubRendition
-					);
+					// console.log(
+					// 	"Rendition object created:",
+					// 	window.epubRendition
+					// );
 
 					// Display the initial location if provided, otherwise display start
 					const displayTarget = initialCfi || undefined; // Pass CFI or let display() find start
-					console.log(
-						"Calling initial display() with target:",
-						displayTarget
-					);
+					// console.log(
+					// 	"Calling initial display() with target:",
+					// 	displayTarget
+					// );
 					window.epubRendition
 						.display(displayTarget)
 						.then(() => {
-							console.log(
-								"Initial rendition displayed. Generating locations..."
-							);
+							// console.log(
+							// 	"Initial rendition displayed. Generating locations..."
+							// );
 							// Generate locations after initial display for better performance
 							return window.epubBook.locations.generate(2048);
 						})
 						.then((locations) => {
-							console.log(
-								"Locations generated:",
-								window.epubBook.locations.total
-							);
+							// console.log(
+							// 	"Locations generated:",
+							// 	window.epubBook.locations.total
+							// );
 							// --- NEW: Set flag before sending initial updates ---
 							window.locationsReady = true;
 							// --- End NEW ---
@@ -147,12 +141,12 @@
 							sendPaginationInfo();
 
 							// --- ADDED: Log FlutterChannel availability after init ---
-							console.log(
-								"JS Init: Checking for FlutterChannel immediately after display() promise chain setup:",
-								window.FlutterChannel
-									? "Exists"
-									: "Does NOT Exist"
-							);
+							// console.log(
+							// 	"JS Init: Checking for FlutterChannel immediately after display() promise chain setup:",
+							// 	window.FlutterChannel
+							// 		? "Exists"
+							// 		: "Does NOT Exist"
+							// );
 							// --- END ADDED ---
 						})
 						.catch((err) => {
@@ -204,23 +198,6 @@
 					});
 
 					window.epubRendition.on("relocated", (location) => {
-						// --- ADDED: Log event firing and location data ---
-						// console.log("JS Event: relocated fired.");
-						// try {
-						// 	console.log(
-						// 		"JS Event: relocated - location object:",
-						// 		JSON.stringify(location)
-						// 	);
-						// } catch (e) {
-						// 	console.log(
-						// 		"JS Event: relocated - location object (error stringifying):",
-						// 		location
-						// 	);
-						// }
-						// --- END ADDED ---
-						// console.log("Event: relocated - CFI:", location?.start?.cfi); // Cleaned up
-						// Relocated often fires after locationChanged and pagination calculations
-						// This might be a better place to update Flutter state
 						sendLocationUpdate(location);
 						sendPaginationInfo(); // Send potentially updated page count for the chapter/book
 					});
@@ -286,20 +263,25 @@
 					};
 
 					// --- NEW: Prevent Default Mouse Wheel Scroll ---
-					document.getElementById("viewer").addEventListener(
+					document.addEventListener(
 						"wheel",
 						function (event) {
 							// Prevent the default scroll behavior which causes large jumps
-							event.preventDefault();
-							// Optionally, trigger page turns (can be sensitive):
-							// if (event.deltaY > 0) { // Scrolling down
-							//  window.nextPage();
-							// } else if (event.deltaY < 0) { // Scrolling up
-							//  window.previousPage();
-							// }
+							console.log(
+								"Mouse wheel event detected. Flow:",
+								flow,
+								"Spread:",
+								spread
+							);
+							if (flow == "paginated") {
+								event.preventDefault();
+							}
 						},
 						{ passive: false }
 					); // Need passive: false to allow preventDefault
+					document.addEventListener("onmousedown", function (e) {
+						console.log("Mouse down event detected.");
+					});
 					// --- END NEW ---
 				} catch (err) {
 					console.error("Error initializing Epub.js:", err);
