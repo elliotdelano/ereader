@@ -1,3 +1,4 @@
+import 'package:ereader/widgets/bookviewers/pdf_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -6,10 +7,11 @@ import 'dart:math' as math;
 import 'dart:io';
 
 import '../models/book.dart';
+import '../widgets/bookviewers/reader_viewer_controller.dart';
 import '../providers/theme_provider.dart';
 import '../providers/reader_settings_provider.dart';
 import '../services/storage_service.dart';
-import '../widgets/epub_viewer.dart';
+import '../widgets/bookviewers/epub_viewer.dart';
 import '../widgets/reader/settings_panel.dart';
 import '../widgets/reader/toc_panel.dart';
 
@@ -24,21 +26,19 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   final StorageService _storageService = StorageService();
-  String? _initialCfi;
+  String? _initialPosition;
   bool _isLoadingProgress = true;
   bool _isAppBarVisible = false;
-  final GlobalKey<CustomEpubViewerState> _epubViewerKey = GlobalKey();
 
-  // --- NEW: Slider and Progress State ---
+  ReaderViewerController? _viewerController;
+
   double _currentBookPercentage = 0.0; // Latest actual book progress
   double _sliderValue = 0.0; // Visual position of slider thumb
-  String? _preScrubCfi; // CFI before user starts scrubbing
-  String? _currentCfiFromViewer; // Latest CFI received from viewer
+  String? _preScrubLocation; // Location before user starts scrubbing
   bool _isScrubbing = false; // Is the user currently dragging the slider?
-  // --- End NEW ---
 
   // Placeholder for current location (page number for PDF, locator for EPUB)
-  final String _currentLocation = '';
+  String? _currentLocation;
 
   // --- NEW: State for Sliding Panels ---
   bool _isSettingsPanelVisible = false;
@@ -59,9 +59,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
     _loadInitialData();
     _markAsCurrentlyReading();
-    // For EPUB, we now use a custom EPUB viewer widget. No controller needed.
-    // --- NEW: Request Focus ---
-    // Request focus after the first frame to ensure the widget is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         FocusScope.of(context).requestFocus(_focusNode);
@@ -98,59 +95,54 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    if (widget.book.format == BookFormat.epub) {
-      // Load the progress map
-      final progressData = await _storageService.loadReadingProgress(
-        widget.book.path,
-      );
+    // Load the progress map
+    final progressData = await _storageService.loadReadingProgress(
+      widget.book.path,
+    );
 
-      // Extract the CFI and Percentage if the map and keys exist
-      double initialPercentage = 0.0;
-      if (progressData != null) {
-        if (progressData['cfi'] is String) {
-          _initialCfi = progressData['cfi'] as String;
-          _currentCfiFromViewer = _initialCfi; // Initialize with loaded CFI
-        } else {
-          _initialCfi = null;
-          _currentCfiFromViewer = null;
-        }
-        // Also load percentage
-        if (progressData['percentage'] is double) {
-          initialPercentage = progressData['percentage'] as double;
-        } else if (progressData['percentage'] is int) {
-          // Handle cases where it might have been saved as int (though unlikely now)
-          initialPercentage = (progressData['percentage'] as int).toDouble();
-        }
+    // Extract the CFI and Percentage if the map and keys exist
+    double initialPercentage = 0.0;
+    if (progressData != null) {
+      if (progressData['location'] is String) {
+        _initialPosition = progressData['location'] as String;
+        _currentLocation = _initialPosition; // Initialize with loaded CFI
       } else {
-        _initialCfi = null;
-        _currentCfiFromViewer = null;
+        _initialPosition = null;
+        _currentLocation = null;
       }
-
-      // Initialize slider and book percentage state
-      _currentBookPercentage = initialPercentage;
-      _sliderValue = initialPercentage;
-
-      // --- NEW: Pre-fetch ToC silently ---
-      // We need the key available which means the viewer must have been built at least once.
-      // Let's try fetching after a short delay post-build.
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (mounted && _epubViewerKey.currentState != null) {
-          try {
-            final tocJson = await _epubViewerKey.currentState!.getTocJson();
-            if (tocJson != null && tocJson.isNotEmpty) {
-              final List<dynamic> tocRaw = jsonDecode(tocJson);
-              _currentTocList = List<Map<String, dynamic>>.from(tocRaw);
-              print("Pre-fetched ToC successfully.");
-            } else {
-              print("Pre-fetched ToC was null or empty.");
-            }
-          } catch (e) {
-            print("Error pre-fetching ToC: $e");
-          }
-        }
-      });
-      // --- END NEW ---
+      // Also load percentage
+      if (progressData['percentage'] is double) {
+        initialPercentage = progressData['percentage'] as double;
+      } else if (progressData['percentage'] is int) {
+        // Handle cases where it might have been saved as int (though unlikely now)
+        initialPercentage = (progressData['percentage'] as int).toDouble();
+      }
+    } else {
+      _initialPosition = null;
+      _currentLocation = null;
     }
+
+    // Initialize slider and book percentage state
+    _currentBookPercentage = initialPercentage;
+    _sliderValue = initialPercentage;
+
+    // We need the key available which means the viewer must have been built at least once.
+    // Let's try fetching after a short delay post-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (mounted && _viewerController != null) {
+        try {
+          final tocJson = await _viewerController!.getTocJson();
+          if (tocJson.isNotEmpty) {
+            _currentTocList = tocJson;
+            // print("Pre-fetched ToC successfully.");
+          } else {
+            print("Pre-fetched ToC was null or empty.");
+          }
+        } catch (e) {
+          print("Error pre-fetching ToC: $e");
+        }
+      }
+    });
     if (mounted) {
       setState(() {
         _isLoadingProgress = false; // Mark loading as complete
@@ -159,12 +151,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _showTableOfContents() async {
-    if (widget.book.format != BookFormat.epub) return;
-
-    // --- MODIFIED: Use pre-fetched ToC or fetch now ---
     if (_currentTocList == null) {
       // Attempt to fetch if not pre-fetched
-      if (_epubViewerKey.currentState == null) {
+      if (_viewerController == null) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Viewer not ready.')));
@@ -176,11 +165,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         barrierDismissible: false,
       );
       try {
-        final tocJson = await _epubViewerKey.currentState!.getTocJson();
+        final tocJson = await _viewerController?.getTocJson();
         Navigator.pop(context); // Dismiss loading
         if (tocJson != null && tocJson.isNotEmpty) {
-          final List<dynamic> tocRaw = jsonDecode(tocJson);
-          _currentTocList = List<Map<String, dynamic>>.from(tocRaw);
+          _currentTocList = tocJson;
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Could not load Table of Contents.')),
@@ -230,7 +218,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     SystemChrome.setSystemUIOverlayStyle(overlayStyle);
 
-    // --- MODIFIED: Calculate panel dimensions ---
     const double panelMaxHeight = 450.0;
     const double panelMaxWidth = 500.0; // Define max width
     final double screenWidth = MediaQuery.sizeOf(context).width;
@@ -252,8 +239,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       panelTopOffset,
       topPadding + 10,
     ); // Ensure below status bar
-
-    // --- END MODIFIED ---
 
     // --- MODIFIED: Wrap Scaffold with Focus and KeyboardListener ---
     return KeyboardListener(
@@ -369,8 +354,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   borderRadius: BorderRadius.circular(16.0),
                   child: TocPanelContent(
                     tocList: _currentTocList ?? [],
-                    onItemTap: (href) {
-                      _epubViewerKey.currentState?.navigateToHref(href);
+                    onItemTap: (entry) {
+                      _viewerController?.navigateToTocEntry(entry);
                       _dismissPanels();
                     },
                   ),
@@ -447,7 +432,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                   onChangeStart: (value) {
                                     setState(() {
                                       _isScrubbing = true;
-                                      _preScrubCfi = _currentCfiFromViewer;
+                                      _preScrubLocation = _currentLocation;
                                     });
                                   },
                                   onChanged: (value) {
@@ -456,9 +441,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                     });
                                   },
                                   onChangeEnd: (value) {
-                                    _epubViewerKey.currentState
-                                        ?.navigateToPercentage(value);
-                                    if (mounted && _preScrubCfi != null) {
+                                    _viewerController?.navigateToPercentage(
+                                      value,
+                                    );
+                                    if (mounted && _preScrubLocation != null) {
                                       ScaffoldMessenger.of(
                                         context,
                                       ).removeCurrentSnackBar();
@@ -472,10 +458,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                           action: SnackBarAction(
                                             label: 'Undo',
                                             onPressed: () {
-                                              if (_preScrubCfi != null) {
-                                                _epubViewerKey.currentState
+                                              if (_preScrubLocation != null) {
+                                                _viewerController
                                                     ?.navigateToCfi(
-                                                      _preScrubCfi!,
+                                                      _currentLocation!,
                                                     );
                                               }
                                             },
@@ -486,7 +472,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                     }
                                     setState(() {
                                       _isScrubbing = false;
-                                      _preScrubCfi = null;
+                                      _preScrubLocation = null;
                                     });
                                   },
                                 ),
@@ -506,15 +492,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _buildReaderView(ReaderSettingsProvider settingsProvider) {
+    if (_isLoadingProgress) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (widget.book.format == BookFormat.epub) {
-      if (_isLoadingProgress) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      return CustomEpubViewer(
-        key: _epubViewerKey,
+      return EpubViewer(
         filePath: widget.book.path,
-        initialCfi: _initialCfi,
+        initialCfi: _initialPosition,
         onLocationChanged: _handleLocationUpdate,
+        onViewerCreated: (controller) {
+          _viewerController = controller;
+        },
+      );
+    } else if (widget.book.format == BookFormat.pdf) {
+      // Placeholder for PDF viewer
+      return PdfController(
+        filePath: widget.book.path,
+        startPage: int.parse(_initialPosition ?? '1'),
+        onLocationChanged: _handleLocationUpdate,
+        onViewerCreated: (controller) {
+          _viewerController = controller;
+        },
       );
     } else {
       return const Center(
@@ -544,7 +542,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       listen: false,
     );
     if (settingsProvider.epubFlow != EpubFlow.scrolled) {
-      _epubViewerKey.currentState?.previousPage();
+      _viewerController?.previousPage();
     }
   }
 
@@ -568,17 +566,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
       listen: false,
     );
     if (settingsProvider.epubFlow != EpubFlow.scrolled) {
-      _epubViewerKey.currentState?.nextPage();
+      _viewerController?.nextPage();
     }
   }
   // --- END NEW ---
 
   // --- NEW: Handle Location Update from Viewer ---
-  void _handleLocationUpdate(double percentage, String? cfi) {
+  void _handleLocationUpdate(double percentage, String? location) {
     if (mounted) {
       setState(() {
         _currentBookPercentage = percentage;
-        _currentCfiFromViewer = cfi;
+        _currentLocation = location;
         // Only update slider's visual value if user isn't actively dragging it
         if (!_isScrubbing) {
           _sliderValue = percentage;
@@ -590,12 +588,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   // NEW: Handle horizontal swipes for page turning
   void _handleHorizontalSwipe(DragEndDetails details) {
-    if (widget.book.format != BookFormat.epub) return; // Only for EPUBs
-
     final settingsProvider = Provider.of<ReaderSettingsProvider>(
       context,
       listen: false,
     );
+
+    //TODO: rename settings to be format independent
     if (settingsProvider.epubFlow == EpubFlow.scrolled) {
       return; // Do nothing in scroll mode
     }
@@ -605,36 +603,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (details.primaryVelocity != null) {
       if (details.primaryVelocity! < -500) {
         // Swiped Left (->): Next Page
-        _epubViewerKey.currentState?.nextPage();
+        _viewerController?.nextPage();
       } else if (details.primaryVelocity! > 500) {
         // Swiped Right (<-): Previous Page
-        _epubViewerKey.currentState?.previousPage();
+        _viewerController?.previousPage();
       }
     }
   }
 
   // --- NEW: Keyboard Event Handler ---
   void _handleKeyEvent(KeyEvent event) {
-    // --- MODIFIED: Check platform directly ---
-    if (event is KeyDownEvent && // Process key down events
-        (Platform.isWindows || Platform.isLinux) && // Only on desktop
-        widget.book.format == BookFormat.epub) {
-      // Only for EPUBs
-      // --- END MODIFIED ---
-
+    if (event is KeyDownEvent && (Platform.isWindows || Platform.isLinux)) {
       final settingsProvider = Provider.of<ReaderSettingsProvider>(
         context,
         listen: false,
       );
 
       // Only handle arrows if in paginated mode
+      //TODO: rename settings to be format independent
       if (settingsProvider.epubFlow == EpubFlow.paginated) {
         if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          // print("[Keyboard] Left Arrow Pressed");
-          _epubViewerKey.currentState?.previousPage();
+          _viewerController?.previousPage();
         } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-          // print("[Keyboard] Right Arrow Pressed");
-          _epubViewerKey.currentState?.nextPage();
+          _viewerController?.nextPage();
         }
       }
     }

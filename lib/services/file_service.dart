@@ -172,8 +172,6 @@ class FileService {
     return books.map((book) => Book.fromMetadata(book)).toList();
   }
 
-  //TODO: redo scan to support multiple directories and individual files
-  // Scan a directory recursively for supported book files
   Future<List<Book>> scanForBooks(String directoryPath) async {
     // final List<Book> books = [];
     // final List<String> existingPaths = [];
@@ -209,9 +207,6 @@ class FileService {
               if (fileLastModified.isAfter(existingMetadata.lastModified)) {
                 // File changed: Re-extract, update metadata, set flag
                 metadataNeedsUpdate = true;
-                // print(
-                //   "File modified, re-extracting metadata for: ${entity.path}",
-                // );
               }
             }
 
@@ -231,40 +226,14 @@ class FileService {
                   // Preserve ID when updating
                   await _databaseService.updateBook(extractedMetadata);
                 }
-                existingMetadata = await _databaseService.getBookByPath(
-                  entity.path,
-                );
+                // existingMetadata = await _databaseService.getBookByPath(
+                //   entity.path,
+                // );
               }
             }
-
-            // Create Book instance using the latest metadata (either existing or updated)
-            // if (existingMetadata != null) {
-            //   books.add(Book.fromMetadata(existingMetadata));
-            // } else {
-            //   print(
-            //     "Warning: Could not get metadata for ${entity.path}, creating Book with fallback title.",
-            //   );
-            //   books.add(
-            //     Book(
-            //       path: entity.path,
-            //       title: Book.getTitleFromPath(entity.path),
-            //       format: format,
-            //       lastModified: File(entity.path).lastModifiedSync(),
-            //       dateAdded: DateTime.now(),
-            //     ),
-            //   );
-            // }
           }
         }
       }
-
-      // Remove books that no longer exist in the filesystem - REMOVED LOGIC
-      // final orphanedBooks = await _databaseService.getOrphanedBooks(
-      //   existingPaths,
-      // );
-      // for (final book in orphanedBooks) {
-      //   await _databaseService.deleteBook(book.path);
-      // }
     } catch (e) {
       print("Error scanning directory: $e");
       // Depending on the error, you might want to return partial results or empty
@@ -275,19 +244,23 @@ class FileService {
 
   Future<Book?> retrieveSingleFile(String path) async {
     final format = Book.getFormatFromPath(path);
-    if (format != BookFormat.epub) {
+    if (format == BookFormat.unknown) {
       return null;
     }
 
     BookMetadata? metadata = await _databaseService.getBookByPath(path);
     if (metadata == null) {
-      metadata = await _extractEpubMetadata(path);
+      metadata =
+          format == BookFormat.epub
+              ? await _extractEpubMetadata(path)
+              : await _extractPdfMetadata(path);
       if (metadata != null) {
         await _databaseService.insertBook(metadata);
       }
     }
 
     if (metadata == null) {
+      print("No metadata found for file: $path");
       return null;
     }
 

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 // --- NEW: Toc Panel Content Widget ---
 class TocPanelContent extends StatelessWidget {
   final List<Map<String, dynamic>> tocList;
-  final Function(String href) onItemTap;
+  final Function(String loc) onItemTap;
 
   const TocPanelContent({
     super.key,
@@ -47,7 +47,7 @@ class TocPanelContent extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final item = tocList[index];
                     final String label = item['label'] ?? 'Untitled';
-                    final String? href = item['href'];
+                    final String? loc = item['loc'];
                     final int depth = item['depth'] ?? 0;
 
                     return ListTile(
@@ -63,11 +63,11 @@ class TocPanelContent extends StatelessWidget {
                       ),
                       dense: true,
                       onTap:
-                          href == null
+                          loc == null
                               ? null
                               : () {
-                                print("ToC Navigating to: $href");
-                                onItemTap(href);
+                                print("ToC Navigating to: $loc");
+                                onItemTap(loc);
                               },
                     );
                   },

@@ -1,13 +1,10 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../screens/library_screen.dart';
-import '../models/book.dart';
 import '../models/custom_theme.dart';
 
 class StorageService {
   static const String _folderPathKey = 'selectedFolderPath';
-  static const String _bookmarksKeyPrefix =
-      'bookmarks_'; // Prefix for book-specific bookmarks
 
   // --- Folder Path ---
 
@@ -27,14 +24,14 @@ class StorageService {
   // Saves both CFI and percentage progress (0.0 to 1.0)
   Future<void> saveReadingProgress(
     String bookPath,
-    String cfi,
+    String location,
     double percentage,
   ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final key = _progressKeyPrefix + bookPath;
       // Store as a JSON map
-      final progressData = {'cfi': cfi, 'percentage': percentage};
+      final progressData = {'location': location, 'percentage': percentage};
       final jsonString = jsonEncode(progressData);
       // print("Saving progress for $bookPath: Data=$jsonString"); // Log saving
       await prefs.setString(key, jsonString);

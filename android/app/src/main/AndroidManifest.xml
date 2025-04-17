@@ -27,8 +27,8 @@
                 <!-- Optional: Add pathPattern as fallback for file scheme -->
                 <data android:pathPattern=".*\\.epub" />
                  <!-- Add more mimeType/pathPattern for other formats (e.g., PDF) -->
-                 <!-- <data android:mimeType="application/pdf" /> -->
-                 <!-- <data android:pathPattern=".*\\.pdf" /> -->
+                 <data android:mimeType="application/pdf" />
+                 <data android:pathPattern=".*\\.pdf" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

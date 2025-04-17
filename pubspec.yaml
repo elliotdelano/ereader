@@ -67,6 +67,7 @@ dependencies:
     uuid: ^4.5.1
     device_info_plus: ^11.3.3
     receive_sharing_intent: ^1.8.1
+    pdfrx: ^1.1.23
 
 dev_dependencies:
     flutter_test:

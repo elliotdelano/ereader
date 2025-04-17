@@ -1,3 +1,4 @@
+import 'package:ereader/widgets/bookviewers/reader_viewer_controller.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io' show Platform;
@@ -8,38 +9,35 @@ import 'package:ereader/services/epub_server_service.dart';
 import 'dart:convert';
 import 'package:ereader/services/storage_service.dart';
 
-import 'webview/platform_webview_interface.dart';
-import 'webview/mobile_webview_adapter.dart';
-import 'webview/desktop_webview_adapter.dart';
-
-// Add a callback type for navigation methods if needed by parent
-// typedef ChapterNavigationCallback = void Function(String href);
+import '../webview/platform_webview_interface.dart';
+import '../webview/mobile_webview_adapter.dart';
+import '../webview/desktop_webview_adapter.dart';
 
 typedef EpubLocationChangedCallback =
     void Function(double percentage, String? cfi);
 
-class CustomEpubViewer extends StatefulWidget {
+class EpubViewer extends StatefulWidget {
   final String filePath;
   final String? initialCfi;
-  final EpubLocationChangedCallback? onLocationChanged; // NEW: Callback
+  final EpubLocationChangedCallback? onLocationChanged;
 
-  // Add callbacks if ReaderScreen needs to trigger navigation
-  // final ChapterNavigationCallback? onNextChapter;
-  // final ChapterNavigationCallback? onPreviousChapter;
+  final void Function(ReaderViewerController controler)? onViewerCreated;
 
-  const CustomEpubViewer({
+  const EpubViewer({
     super.key,
     required this.filePath,
     this.initialCfi,
-    this.onLocationChanged, // NEW: Add to constructor
+    this.onLocationChanged,
+    this.onViewerCreated,
   });
 
   @override
-  State<CustomEpubViewer> createState() => CustomEpubViewerState();
+  State<EpubViewer> createState() => EpubViewerState();
 }
 
-class CustomEpubViewerState extends State<CustomEpubViewer>
-    with WidgetsBindingObserver {
+class EpubViewerState extends State<EpubViewer>
+    with WidgetsBindingObserver
+    implements ReaderViewerController {
   final EpubServerService epubServerService = EpubServerService();
   final StorageService _storageService = StorageService();
   bool _isLoading = true;
@@ -59,11 +57,9 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   final String _jsChannelName = 'FlutterChannel';
   Timer? _saveProgressTimer; // ADDED: Timer for periodic saves
 
-  // --- NEW: Resize Handling State ---
   Size? _previousSize;
   Timer? _resizeDebounceTimer;
   final Duration _resizeDebounceDuration = const Duration(milliseconds: 500);
-  // --- END NEW ---
 
   // Store previous settings to detect changes
   double? _previousFontSize;
@@ -71,21 +67,24 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   String? _previousSelectedThemeId; // Added to track theme ID changes
   EpubFlow? _previousEpubFlow;
   EpubSpread? _previousEpubSpread;
-  // --- NEW: Previous Line Spacing / Margin State ---
   double? _previousLineSpacing;
   MarginSize? _previousMarginSize;
-  // --- END NEW ---
 
   @override
   void initState() {
     super.initState();
     _initializeAndLoadEpub();
-    // --- NEW: Register observer and start timer ---
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.onViewerCreated != null) {
+        widget.onViewerCreated!(this);
+      }
+    });
+
     WidgetsBinding.instance.addObserver(this);
     _saveProgressTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
       _saveCurrentProgress();
     });
-    // --- End NEW ---
   }
 
   // Use didChangeDependencies to get initial provider values and listen
@@ -225,20 +224,10 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
   }
 
   void _handleJsMessage(String messageJsonString) {
-    // --- ADDED LOGGING ---
-    // print(
-    //   "[JS -> Dart] Received object type: ${messageJsonString.runtimeType}",
-    // );
-    // --- END ADDED LOGGING ---
-    // print("[JS -> Dart] Raw message: $messageJsonString");
-    // --- END ADDED LOGGING ---
     try {
-      // --- MODIFIED: Handle potential double-escaping from CEF ---
       dynamic jsonData;
       if (messageJsonString.startsWith('"') &&
           messageJsonString.endsWith('"')) {
-        // Likely double-escaped (CEF)
-        // print("[JS -> Dart] Detected double-escaped string, decoding twice...");
         try {
           String singleEscapedJson = jsonDecode(messageJsonString);
           jsonData = jsonDecode(singleEscapedJson);
@@ -249,8 +238,6 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
           return; // Exit if double decode fails
         }
       } else {
-        // Likely single-escaped (Mobile or standard)
-        // print("[JS -> Dart] Assuming standard JSON string, decoding once...");
         jsonData = jsonDecode(messageJsonString);
       }
 
@@ -262,10 +249,8 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         return;
       }
       final Map<String, dynamic> data = jsonData;
-      // --- END MODIFIED ---
 
       final String action = data['action'] ?? 'unknown';
-      // print("Received action from JS: $action"); // Log action type
 
       if (action == 'locationUpdate') {
         final receivedCfi = data['cfi'];
@@ -686,7 +671,6 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
     context.watch<ReaderSettingsProvider>();
     context.watch<ThemeProvider>();
 
-    // --- NEW: Resize Detection (only for desktop) ---
     if (_isDesktop) {
       final Size currentSize = MediaQuery.sizeOf(context);
       if (_previousSize != null && currentSize != _previousSize) {
@@ -694,7 +678,6 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
       }
       _previousSize = currentSize; // Store current size for next build
     }
-    // --- END NEW ---
 
     // Call the update check on every build AFTER watching providers
     // Use a post-frame callback to ensure it runs after the build completes
@@ -796,13 +779,13 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
 
   /// Fetches the Table of Contents as a JSON string from the underlying EPUB.
   /// Returns null if the ToC cannot be fetched.
-  Future<String?> getTocJson() async {
+  Future<List<Map<String, dynamic>>> getTocJson() async {
     // Use the interface, check for null and initialized status
     if (_platformWebViewController == null ||
         !_platformWebViewController!.isInitialized ||
         _isLoading) {
       print("getTocJson: WebView not ready or still loading.");
-      return null;
+      return [];
     }
     try {
       // Use interface method
@@ -813,28 +796,35 @@ class CustomEpubViewerState extends State<CustomEpubViewer>
         // Basic check if it looks like JSON (starts/ends with [] or {})
         if ((result.startsWith('[') && result.endsWith(']')) ||
             (result.startsWith('{') && result.endsWith('}'))) {
-          return result;
+          print("getTocJson: Received valid JSON string: $result");
+          return List<Map<String, dynamic>>.from(jsonDecode(result));
         } else {
           // Attempt to decode if it seems like a quoted string containing JSON
           try {
-            return jsonDecode(result)
-                as String; // If JS returns a string that *is* JSON
+            return List<Map<String, dynamic>>.from(
+              jsonDecode(jsonDecode(result)),
+            ); // If JS returns a string that *is* JSON
           } catch (_) {
             // If decoding fails, return the raw string if it seems plausible, otherwise null
-            return result; // Or consider returning null if it's definitely not JSON
+            return []; // Or consider returning null if it's definitely not JSON
           }
         }
       } else if (result != null) {
         print(
           "getTocJson: Received non-string or empty result: ${result.runtimeType}",
         );
-        return result.toString(); // Or null? Handle unexpected types
+        return []; // Or null? Handle unexpected types
       }
-      return null;
+      return [];
     } catch (e) {
       print("Error calling getToc() in JS: $e");
-      return null;
+      return [];
     }
+  }
+
+  @override
+  Future<void> navigateToTocEntry(String entry) async {
+    await navigateToHref(entry);
   }
 
   /// Navigates the EPUB view to the specified href.
