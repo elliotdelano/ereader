@@ -64,15 +64,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         FocusScope.of(context).requestFocus(_focusNode);
       }
     });
+    _loadInitialProgress();
     // --- END NEW ---
   }
 
   @override
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    // --- NEW: Dispose FocusNode ---
     _focusNode.dispose();
-    // --- END NEW ---
     super.dispose();
   }
 
@@ -335,7 +334,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 child: Material(
                   elevation: 8.0,
                   borderRadius: BorderRadius.circular(16.0),
-                  child: SettingsPanelContent(),
+                  child: SettingsPanelContent(format: widget.book.format),
                 ),
               ),
             ),
@@ -399,12 +398,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             elevation: 0,
                             title: Text(widget.book.title),
                             actions: [
-                              if (widget.book.format == BookFormat.epub)
-                                IconButton(
-                                  icon: const Icon(Icons.list),
-                                  tooltip: 'Table of Contents',
-                                  onPressed: _showTableOfContents,
-                                ),
+                              IconButton(
+                                icon: const Icon(Icons.list),
+                                tooltip: 'Table of Contents',
+                                onPressed: _showTableOfContents,
+                              ),
                               IconButton(
                                 icon: const Icon(Icons.settings_outlined),
                                 tooltip: 'Settings',
@@ -412,72 +410,68 @@ class _ReaderScreenState extends State<ReaderScreen> {
                               ),
                             ],
                           ),
-                          if (widget.book.format == BookFormat.epub)
-                            SizedBox(
-                              height: 20,
-                              child: SliderTheme(
-                                data: SliderTheme.of(context).copyWith(
-                                  trackHeight: 2.0,
-                                  thumbShape: const RoundSliderThumbShape(
-                                    enabledThumbRadius: 6.0,
-                                  ),
-                                  overlayShape: const RoundSliderOverlayShape(
-                                    overlayRadius: 12.0,
-                                  ),
+                          SizedBox(
+                            height: 20,
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 2.0,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 6.0,
                                 ),
-                                child: Slider(
-                                  value: _sliderValue.clamp(0.0, 1.0),
-                                  min: 0.0,
-                                  max: 1.0,
-                                  onChangeStart: (value) {
-                                    setState(() {
-                                      _isScrubbing = true;
-                                      _preScrubLocation = _currentLocation;
-                                    });
-                                  },
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _sliderValue = value;
-                                    });
-                                  },
-                                  onChangeEnd: (value) {
-                                    _viewerController?.navigateToPercentage(
-                                      value,
-                                    );
-                                    if (mounted && _preScrubLocation != null) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).removeCurrentSnackBar();
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: const Text(
-                                            'Jumped to location',
-                                          ),
-                                          action: SnackBarAction(
-                                            label: 'Undo',
-                                            onPressed: () {
-                                              if (_preScrubLocation != null) {
-                                                _viewerController
-                                                    ?.navigateToCfi(
-                                                      _currentLocation!,
-                                                    );
-                                              }
-                                            },
-                                          ),
-                                          duration: const Duration(seconds: 4),
-                                        ),
-                                      );
-                                    }
-                                    setState(() {
-                                      _isScrubbing = false;
-                                      _preScrubLocation = null;
-                                    });
-                                  },
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 12.0,
                                 ),
                               ),
+                              child: Slider(
+                                value: _sliderValue.clamp(0.0, 1.0),
+                                min: 0.0,
+                                max: 1.0,
+                                onChangeStart: (value) {
+                                  setState(() {
+                                    _isScrubbing = true;
+                                    _preScrubLocation = _currentLocation;
+                                  });
+                                },
+                                onChanged: (value) {
+                                  setState(() {
+                                    _sliderValue = value;
+                                  });
+                                },
+                                onChangeEnd: (value) {
+                                  _viewerController?.navigateToPercentage(
+                                    value,
+                                  );
+                                  if (mounted && _preScrubLocation != null) {
+                                    ScaffoldMessenger.of(
+                                      context,
+                                    ).removeCurrentSnackBar();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                          'Jumped to location',
+                                        ),
+                                        action: SnackBarAction(
+                                          label: 'Undo',
+                                          onPressed: () {
+                                            if (_preScrubLocation != null) {
+                                              _viewerController?.navigateToCfi(
+                                                _currentLocation!,
+                                              );
+                                            }
+                                          },
+                                        ),
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                  setState(() {
+                                    _isScrubbing = false;
+                                    _preScrubLocation = null;
+                                  });
+                                },
+                              ),
                             ),
+                          ),
                         ],
                       ),
                     ),
@@ -583,6 +577,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         }
       });
     }
+    if (location != null && location.isNotEmpty) {
+      _saveCurrentProgress(location, percentage);
+    }
   }
   // --- End NEW ---
 
@@ -628,6 +625,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
           _viewerController?.nextPage();
         }
       }
+    }
+  }
+
+  Future<void> _loadInitialProgress() async {
+    final progress = await _storageService.loadReadingProgress(
+      widget.book.path,
+    );
+    if (progress != null) {
+      setState(() {
+        _initialPosition = progress['location'];
+      });
+    }
+  }
+
+  Future<void> _saveCurrentProgress(String loc, double percentage) async {
+    try {
+      await _storageService.saveReadingProgress(
+        widget.book.path,
+        loc,
+        percentage,
+      );
+    } catch (e) {
+      print("Error saving progress: $e");
     }
   }
 

@@ -1,5 +1,8 @@
+import 'package:ereader/providers/reader_settings_provider.dart';
+import 'package:ereader/providers/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:provider/provider.dart';
 import 'reader_viewer_controller.dart';
 
 class PdfController extends StatefulWidget {
@@ -80,28 +83,43 @@ class PdfControllerState extends State<PdfController>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<ThemeProvider>();
+    context.watch<ReaderSettingsProvider>();
+
     if (!_documentLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
-    return PdfViewer(
-      // pdfrx’s PdfViewer takes the document reference and controller.
-      _document,
-      controller: _pdfController,
-      initialPageNumber: widget.startPage,
-      params: PdfViewerParams(
-        onPageChanged: (pageNumber) {
-          setState(() {
-            _currentPage = pageNumber!;
-          });
-          widget.onLocationChanged(
-            pageNumber!.toDouble() / _totalPages,
-            "$pageNumber",
-          );
-        },
-        onViewerReady: (document, controller) async {
-          _totalPages = controller.pageCount;
-          tocJson = _constructTocJson(await document.loadOutline());
-        },
+    return ColorFiltered(
+      //check if the theme is dark or light
+      //and set the color filter accordingly
+      colorFilter: ColorFilter.mode(
+        Theme.of(context).scaffoldBackgroundColor,
+        Theme.of(context).brightness == Brightness.dark
+            ? BlendMode.difference
+            : BlendMode.dst,
+      ),
+      child: PdfViewer(
+        // pdfrx’s PdfViewer takes the document reference and controller.
+        _document,
+        controller: _pdfController,
+        initialPageNumber: widget.startPage,
+        params: PdfViewerParams(
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          margin: 0.0,
+          onPageChanged: (pageNumber) {
+            setState(() {
+              _currentPage = pageNumber!;
+            });
+            widget.onLocationChanged(
+              pageNumber!.toDouble() / _totalPages,
+              "$pageNumber",
+            );
+          },
+          onViewerReady: (document, controller) async {
+            _totalPages = controller.pageCount;
+            tocJson = _constructTocJson(await document.loadOutline());
+          },
+        ),
       ),
     );
   }

@@ -55,7 +55,6 @@ class EpubViewerState extends State<EpubViewer>
   int _currentPage = 0; // Keep for UI display, might be updated by Epub.js
   int _totalPages = 1; // Keep for UI display, might be updated by Epub.js
   final String _jsChannelName = 'FlutterChannel';
-  Timer? _saveProgressTimer; // ADDED: Timer for periodic saves
 
   Size? _previousSize;
   Timer? _resizeDebounceTimer;
@@ -82,9 +81,6 @@ class EpubViewerState extends State<EpubViewer>
     });
 
     WidgetsBinding.instance.addObserver(this);
-    _saveProgressTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      _saveCurrentProgress();
-    });
   }
 
   // Use didChangeDependencies to get initial provider values and listen
@@ -626,13 +622,6 @@ class EpubViewerState extends State<EpubViewer>
     print("CustomEpubViewer disposing, stopping server...");
     epubServerService.stop();
 
-    // --- NEW: Unregister observer, cancel timer, and save final progress ---
-    WidgetsBinding.instance.removeObserver(this);
-    _saveProgressTimer?.cancel();
-    _resizeDebounceTimer?.cancel(); // ADDED: Cancel resize timer
-    _saveCurrentProgress(isClosing: true); // Ensure final save on dispose
-    // --- End NEW ---
-
     // --- UPDATED: Dispose via interface ---
     print("Disposing platform WebView controller...");
     _platformWebViewController?.dispose();
@@ -651,7 +640,6 @@ class EpubViewerState extends State<EpubViewer>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       print("App lifecycle state changed to $state, saving progress...");
-      _saveCurrentProgress(); // Save progress when app is paused or detached
     }
   }
   // --- End Lifecycle Handling ---
@@ -884,30 +872,6 @@ class EpubViewerState extends State<EpubViewer>
       print("Error calling navigateToCfi in JS: $e");
     }
   }
+
   // --- End Navigation Methods ---
-
-  // --- NEW: Progress Saving Logic ---
-  Future<void> _saveCurrentProgress({bool isClosing = false}) async {
-    final logPrefix = isClosing ? "(Dispose)" : "(Auto-save)";
-    if (_currentCfi != null && _currentCfi!.isNotEmpty) {
-      // print(
-      //   "$logPrefix Saving progress: Attempting with CFI='$_currentCfi', Percentage=${_bookPercentage.toStringAsFixed(4)} for path=${widget.filePath}",
-      // );
-      try {
-        await _storageService.saveReadingProgress(
-          widget.filePath,
-          _currentCfi!, // Assert non-null as checked above
-          _bookPercentage,
-        );
-      } catch (e) {
-        print("$logPrefix Error saving progress: $e");
-      }
-    } else {
-      print(
-        "$logPrefix Skipping save: No valid CFI available (_currentCfi = '$_currentCfi').",
-      );
-    }
-  }
-
-  // --- End Progress Saving Logic ---
 }
